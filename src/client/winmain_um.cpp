@@ -33,6 +33,7 @@
 // SYSTEM INCLUDES ////////////////////////////////////////////////////////////
 #define WIN32_LEAN_AND_MEAN  // only bare bones windows stuff wanted
 #include <windows.h>
+#include <shellapi.h>
 #include <stdlib.h>
 #include <ole2.h>
 #include <dbt.h>
@@ -870,6 +871,17 @@ Int APIENTRY WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
                       LPSTR lpCmdLine, Int nCmdShow )
 {
 	checkProtection();
+
+	// zh_client.exe is the game engine for the launcher (join) and the host (server). Started by hand it would show the retail main menu, whose
+	// buttons need the shell, the single-player campaign and the lobby this mod does not have (and some of them crash), so send the player to the launcher.
+	if (!getenv("UM_CLIENT") && !getenv("UM_SERVER") && !getenv("UM_STANDALONE"))
+	{
+		char self[MAX_PATH]; GetModuleFileNameA(NULL, self, MAX_PATH); char *sl = strrchr(self, '\\'); if (sl) *sl = 0;
+		std::string lp = std::string(self) + "\\zh_launcher.exe";
+		if ((INT_PTR)ShellExecuteA(NULL, "open", lp.c_str(), NULL, self, SW_SHOWNORMAL) <= 32)
+			MessageBoxA(NULL, "Start the game with zh_launcher.exe (it chooses your name, faction and server). zh_client.exe is only the game engine that the launcher and the host start.", "Living World", MB_OK | MB_ICONINFORMATION);
+		return 0;
+	}
 
 	void UmClientLogInit(void); UmClientLogInit();
 	void UmClientStartHangWatch(void); UmClientStartHangWatch();

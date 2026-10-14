@@ -3450,7 +3450,7 @@ diff -ruN a/GameEngine/Source/GameLogic/Map/PolygonTrigger.cpp b/GameEngine/Sour
  	}
 diff -ruN a/GameEngine/Source/GameLogic/Map/TerrainLogic.cpp b/GameEngine/Source/GameLogic/Map/TerrainLogic.cpp
 --- a/GameEngine/Source/GameLogic/Map/TerrainLogic.cpp	2026-10-13 16:49:45.037305032 +0100
-+++ b/GameEngine/Source/GameLogic/Map/TerrainLogic.cpp	2026-10-14 20:58:20.389842163 +0100
++++ b/GameEngine/Source/GameLogic/Map/TerrainLogic.cpp	2026-10-14 22:35:22.854602139 +0100
 @@ -274,7 +274,7 @@
  	// get the template of the bridge
  	TerrainRoadType *bridgeTemplate = TheTerrainRoads->findBridge( bridgeTemplateName );
@@ -3486,73 +3486,81 @@ diff -ruN a/GameEngine/Source/GameLogic/Map/TerrainLogic.cpp b/GameEngine/Source
  			if( c )
  				strippedCompareMapNameOnly.set( c );
  			else
-@@ -1288,6 +1288,66 @@
+@@ -1288,6 +1288,7 @@
  		// Eat the error - legacy files are not valid chunk format (and don't have waypoint info.)
  		DEBUG_LOG(("Unable to read waypoint info."));
  	}
-+#ifdef UM_LW
-+	// Living World stress scenarios: UM_SYNTH_STARTS=N invents Player_k_Start waypoints (on a grid over the map) for k beyond the
-+	// ones the map defines, so stock 8-player maps can host N players. Real worlds use maps that define their own starts.
-+	extern int UmSynthStarts;   // set from the world description (server-owned setting)
-+	if (UmSynthStarts > 0)
-+	{
-+		Int n = UmSynthStarts, have = 0;
-+		AsciiString nm;
-+		for (Int k = 1; k <= n; ++k) { nm.format("Player_%d_Start", k); if (getWaypointByName(nm)) have = k; else break; }
-+		Region3D ext; getExtent(&ext);
-+		Int cols = 1; while (cols * cols < n) ++cols;
-+		Real cw = (ext.hi.x - ext.lo.x) / cols, ch = (ext.hi.y - ext.lo.y) / cols;
-+		std::vector<Coord3D> taken;   // start spots already decided (map-defined ones included), to keep new ones apart
-+		for (Int k = 1; k <= have; ++k) { nm.format("Player_%d_Start", k); if (Waypoint *w = getWaypointByName(nm)) taken.push_back(*w->getLocation()); }
-+		Int moved = 0, forced = 0;
-+		for (Int k = have + 1; k <= n; ++k)
-+		{
-+			Int gx = (k - 1) % cols, gy = (k - 1) / cols;
-+			Coord3D loc; loc.x = ext.lo.x + cw * (gx + 0.5f); loc.y = ext.lo.y + ch * (gy + 0.5f); loc.z = getGroundHeight(loc.x, loc.y);
-+			// A base needs dry, flat, passable ground with room around it: look outward from the grid cell centre for the nearest spot where the
-+			// centre and a ring of points around it (the buffer) are above water, off cliffs and not steep, away from the map edge and from other starts.
-+			{
-+				const Real levels[3][2] = { { 140.0f, 280.0f }, { 100.0f, 220.0f }, { 60.0f, 160.0f } };   // buffer radius, spacing: relaxed when the map has little good ground
-+				const Real edge = 220.0f; Coord3D best = loc; Bool found = FALSE;
-+				const Real maxR = (cw > ch ? cw : ch) * 0.9f;
-+				for (Int lv = 0; lv < 3 && !found; ++lv)
-+				{
-+				const Real buffer = levels[lv][0], apart = levels[lv][1];
-+				for (Real r = 0; r <= maxR && !found; r += 35.0f)
-+				{
-+					Int steps = r == 0 ? 1 : 16;
-+					for (Int a = 0; a < steps && !found; ++a)
-+					{
-+						Real ang = a * (6.2831853f / 16.0f); Coord3D c; c.x = loc.x + r * cosf(ang); c.y = loc.y + r * sinf(ang);
-+						if (c.x < ext.lo.x + edge || c.x > ext.hi.x - edge || c.y < ext.lo.y + edge || c.y > ext.hi.y - edge) continue;
-+						Bool ok = TRUE;
-+						for (Int q = 0; q < 9 && ok; ++q)
-+						{
-+							Real px = c.x, py = c.y; if (q > 0) { Real qa = (q - 1) * (6.2831853f / 8.0f); px += buffer * cosf(qa); py += buffer * sinf(qa); }
-+							Coord3D normal; Real z = getGroundHeight(px, py, &normal);
-+							if (isUnderwater(px, py) || isCliffCell(px, py) || normal.z < 0.92f) ok = FALSE;
-+						}
-+						for (size_t t = 0; t < taken.size() && ok; ++t) { Real dx = c.x - taken[t].x, dy = c.y - taken[t].y; if (dx * dx + dy * dy < apart * apart) ok = FALSE; }
-+						if (ok) { best = c; best.z = getGroundHeight(c.x, c.y); found = TRUE; }
-+					}
-+				}
-+				}
-+				if (found) { if (best.x != loc.x || best.y != loc.y) ++moved; loc = best; } else ++forced;
-+				taken.push_back(loc);
-+			}
-+			nm.format("Player_%d_Start", k);
-+			Waypoint *pWay = newInstance(Waypoint)((WaypointID)(900000 + k), nm, &loc, AsciiString::TheEmptyString, AsciiString::TheEmptyString, AsciiString::TheEmptyString, FALSE);
-+			pWay->setNext(m_waypointListHead);
-+			m_waypointListHead = pWay;
-+		}
-+		DEBUG_LOG(("UM_SYNTH_STARTS: %d start waypoints (map defined %d), grid %dx%d over %.0fx%.0f\n", n, have, cols, cols, ext.hi.x - ext.lo.x, ext.hi.y - ext.lo.y));
-+		printf("[um] start spots: %d invented, %d moved off water/cliffs/steep ground, %d could not be improved\n", n - have, moved, forced);
-+	}
-+#endif
 +
  #if 0 //def DEBUG_LOGGING
  	// Dump out the waypoint links.
  	Waypoint *pWay;
+@@ -1317,6 +1318,66 @@
+ 	if (!query) {
+ 		// tell the game interface a new terrain file has been loaded up
+ 		TheTerrainVisual->load( getSourceFilename() );
++
++#ifdef UM_LW
++		// Living World stress scenarios: UM_SYNTH_STARTS=N invents Player_k_Start waypoints (on a grid over the map) for k beyond the
++		// ones the map defines, so stock 8-player maps can host N players. Real worlds use maps that define their own starts.
++		extern int UmSynthStarts;   // set from the world description (server-owned setting)
++		if (UmSynthStarts > 0)
++		{
++			Int n = UmSynthStarts, have = 0;
++			AsciiString nm;
++			for (Int k = 1; k <= n; ++k) { nm.format("Player_%d_Start", k); if (getWaypointByName(nm)) have = k; else break; }
++			Region3D ext; getExtent(&ext);
++			Int cols = 1; while (cols * cols < n) ++cols;
++			Real cw = (ext.hi.x - ext.lo.x) / cols, ch = (ext.hi.y - ext.lo.y) / cols;
++			std::vector<Coord3D> taken;   // start spots already decided (map-defined ones included), to keep new ones apart
++			for (Int k = 1; k <= have; ++k) { nm.format("Player_%d_Start", k); if (Waypoint *w = getWaypointByName(nm)) taken.push_back(*w->getLocation()); }
++			Int moved = 0, forced = 0;
++			for (Int k = have + 1; k <= n; ++k)
++			{
++				Int gx = (k - 1) % cols, gy = (k - 1) / cols;
++				Coord3D loc; loc.x = ext.lo.x + cw * (gx + 0.5f); loc.y = ext.lo.y + ch * (gy + 0.5f); loc.z = getGroundHeight(loc.x, loc.y);
++				// A base needs dry, flat, passable ground with room around it: look outward from the grid cell centre for the nearest spot where the
++				// centre and a ring of points around it (the buffer) are above water, off cliffs and not steep, away from the map edge and from other starts.
++				{
++					const Real levels[3][2] = { { 140.0f, 280.0f }, { 100.0f, 220.0f }, { 60.0f, 160.0f } };   // buffer radius, spacing: relaxed when the map has little good ground
++					const Real edge = 220.0f; Coord3D best = loc; Bool found = FALSE;
++					const Real maxR = (cw > ch ? cw : ch) * 0.9f;
++					for (Int lv = 0; lv < 3 && !found; ++lv)
++					{
++					const Real buffer = levels[lv][0], apart = levels[lv][1];
++					for (Real r = 0; r <= maxR && !found; r += 35.0f)
++					{
++						Int steps = r == 0 ? 1 : 16;
++						for (Int a = 0; a < steps && !found; ++a)
++						{
++							Real ang = a * (6.2831853f / 16.0f); Coord3D c; c.x = loc.x + r * cosf(ang); c.y = loc.y + r * sinf(ang);
++							if (c.x < ext.lo.x + edge || c.x > ext.hi.x - edge || c.y < ext.lo.y + edge || c.y > ext.hi.y - edge) continue;
++							Bool ok = TRUE;
++							for (Int q = 0; q < 9 && ok; ++q)
++							{
++								Real px = c.x, py = c.y; if (q > 0) { Real qa = (q - 1) * (6.2831853f / 8.0f); px += buffer * cosf(qa); py += buffer * sinf(qa); }
++								Coord3D normal; Real z = getGroundHeight(px, py, &normal);
++								if (isUnderwater(px, py) || normal.z < 0.92f) ok = FALSE;   // no isCliffCell (render-side data)   // no isCliffCell: it reads the render-side heightmap, which is not ready (or not the same) in every process, and the spots must be identical everywhere
++							}
++							for (size_t t = 0; t < taken.size() && ok; ++t) { Real dx = c.x - taken[t].x, dy = c.y - taken[t].y; if (dx * dx + dy * dy < apart * apart) ok = FALSE; }
++							if (ok) { best = c; best.z = getGroundHeight(c.x, c.y); found = TRUE; }
++						}
++					}
++					}
++					if (found) { if (best.x != loc.x || best.y != loc.y) ++moved; loc = best; } else ++forced;
++					taken.push_back(loc);
++				}
++				nm.format("Player_%d_Start", k);
++				Waypoint *pWay = newInstance(Waypoint)((WaypointID)(900000 + k), nm, &loc, AsciiString::TheEmptyString, AsciiString::TheEmptyString, AsciiString::TheEmptyString, FALSE);
++				pWay->setNext(m_waypointListHead);
++				m_waypointListHead = pWay;
++			}
++			DEBUG_LOG(("UM_SYNTH_STARTS: %d start waypoints (map defined %d), grid %dx%d over %.0fx%.0f\n", n, have, cols, cols, ext.hi.x - ext.lo.x, ext.hi.y - ext.lo.y));
++			printf("[um] start spots: %d invented, %d moved off water/cliffs/steep ground, %d could not be improved\n", n - have, moved, forced);
++		}
++#endif
+ 	}
+ 
+ 	return TRUE;  // success
 diff -ruN a/GameEngine/Source/GameLogic/Object/Behavior/CountermeasuresBehavior.cpp b/GameEngine/Source/GameLogic/Object/Behavior/CountermeasuresBehavior.cpp
 --- a/GameEngine/Source/GameLogic/Object/Behavior/CountermeasuresBehavior.cpp	2026-10-13 16:49:45.041305077 +0100
 +++ b/GameEngine/Source/GameLogic/Object/Behavior/CountermeasuresBehavior.cpp	2026-10-13 19:27:04.464076397 +0100
@@ -4502,7 +4510,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/Damage.cpp b/GameEngine/Source/Ga
  	"CRUSH",					
 diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source/GameLogic/System/GameLogic.cpp
 --- a/GameEngine/Source/GameLogic/System/GameLogic.cpp	2026-10-13 16:49:45.069305412 +0100
-+++ b/GameEngine/Source/GameLogic/System/GameLogic.cpp	2026-10-14 20:34:35.001969245 +0100
++++ b/GameEngine/Source/GameLogic/System/GameLogic.cpp	2026-10-14 22:25:23.017386978 +0100
 @@ -83,6 +83,7 @@
  #include "GameLogic/CrateSystem.h"
  #include "GameLogic/FPUControl.h"
@@ -4521,7 +4529,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  	switch (m_gameMode) 
  	{
  	case GAME_SHELL:
-@@ -677,6 +681,110 @@
+@@ -677,6 +681,111 @@
  	}
  }
  
@@ -4562,6 +4570,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
 +		if (tmpl >= 0) pt = ThePlayerTemplateStore->getNthPlayerTemplate(tmpl);
 +		player->umApplyProfile(tmpl >= 0 ? pt : NULL, rgb, shown);
 +	}
++	{ AsciiString wn; wn.format("Player_%d_Start", (int)slot->getStartPos() + 1); if (Waypoint *w = TheTerrainLogic->getWaypointByName(wn)) printf("[um] bind slot %d frame %u start %s at %.2f %.2f\n", (int)slotNum, (unsigned)TheGameLogic->getFrame(), wn.str(), w->getLocation()->x, w->getLocation()->y); }
 +	placeNetworkBuildingsForPlayer(slotNum, slot, player, pt);
 +	if (getenv("UM_TRACE_BIND")) { printf("[um] bind slot %d (player %d, %s) before newMap:", slotNum, player->getPlayerIndex(), player->getPlayerType() == PLAYER_COMPUTER ? "cpu" : "human"); for (Object *o = TheGameLogic->getFirstObject(); o; o = o->getNextObject()) if (o->getControllingPlayer() == player) printf(" %s", o->getTemplate()->getName().str()); printf("\n"); }
 +	player->newMap();   // an AI player analyses its base and build list when its map starts; a late joiner starts its 'map' now
@@ -4632,7 +4641,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  // ------------------------------------------------------------------------------------------------
  // ------------------------------------------------------------------------------------------------
  static void checkForDuplicateColors( GameInfo *game )
-@@ -774,7 +882,7 @@
+@@ -774,7 +883,7 @@
  			playerTemplateIdx = GameLogicRandomValue(0, ThePlayerTemplateStore->getPlayerTemplateCount()-1);
  #endif
  			const PlayerTemplate* pt = ThePlayerTemplateStore->getNthPlayerTemplate(playerTemplateIdx);
@@ -4641,7 +4650,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  			{
  #ifdef MORE_RANDOM
  				DEBUG_CRASH(("should not be possible"));
-@@ -792,10 +900,11 @@
+@@ -792,10 +901,11 @@
  		if (colorIdx < 0 || colorIdx >= TheMultiplayerSettings->getNumColors())
  		{
  			DEBUG_ASSERTCRASH(colorIdx == -1, ("Non-random bad color %d in slot %d\n", colorIdx, i));
@@ -4654,7 +4663,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  					colorIdx = -1;
  			}
  			DEBUG_LOG(("Setting color %d to %d\n", i, colorIdx));
-@@ -817,6 +926,10 @@
+@@ -817,6 +927,10 @@
    DEBUG_ASSERTCRASH( md , ("Could not find map %s in the mapcache", game->getMap().str()));
  	if (md)
  		numPlayers = md->m_numPlayers;
@@ -4665,7 +4674,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  
  	// generate a map of start spot distances
  	Real startSpotDistance[MAX_SLOTS][MAX_SLOTS];
-@@ -1178,7 +1291,7 @@
+@@ -1178,7 +1292,7 @@
  	GameInfo *game = NULL;
  	TheGameInfo = NULL;
  	Int localSlot = 0;
@@ -4674,7 +4683,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  	{
  		if (TheLAN)
  		{
-@@ -1993,6 +2106,9 @@
+@@ -1993,6 +2107,9 @@
  
  
  
@@ -4684,7 +4693,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  				placeNetworkBuildingsForPlayer(i, slot, player, pt);
  			}
  
-@@ -2092,7 +2208,12 @@
+@@ -2092,7 +2209,12 @@
  
  	// final step, run newMap for all players
  	if( loadingSaveGame == FALSE )
@@ -4697,7 +4706,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  
  	if ( isChallengeCampaign )
  	{
-@@ -3650,6 +3771,9 @@
+@@ -3650,6 +3772,9 @@
  	// would be getting the CRC anyway, so replays can get the CRCs from the exact instant in time as the original.
  	Bool isMPGameOrReplay = (TheRecorder && TheRecorder->isMultiplayer() && getGameMode() != GAME_SHELL && getGameMode() != GAME_NONE);
  	Bool isSoloGameOrReplay = (TheRecorder && !TheRecorder->isMultiplayer() && getGameMode() != GAME_SHELL && getGameMode() != GAME_NONE);
@@ -4707,7 +4716,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  	Bool generateForMP = (isMPGameOrReplay && (m_frame % TheGameInfo->getCRCInterval()) == 0);
  #if defined(_DEBUG) || defined(_INTERNAL)
  	Bool generateForSolo = isSoloGameOrReplay && ((m_frame && (m_frame%100 == 0)) ||
-@@ -4691,13 +4815,22 @@
+@@ -4691,13 +4816,22 @@
  {
    
  	// version
@@ -4731,7 +4740,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  	//
  	// note that we do not do the id counter here, we did it in the game state block because
  	// it's important to do that part very early in the load process
-@@ -4808,6 +4941,15 @@
+@@ -4808,6 +4942,15 @@
  
  		}  // end for, i
  

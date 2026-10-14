@@ -276,7 +276,7 @@ public:
 		m_lastFrame = f;
 		if (f % 1500 == 0) status();
 		if (const char *df = getenv("UM_DEEPCRC_FRAME"))   // debugging aid: dump every xfer'd value at a frame, diff server vs replica
-			if ((unsigned)atoi(df) == f) { char nm[64]; sprintf(nm, "deepcrc_%s_%u.bin", m_role == UM_ROLE_SERVER ? "server" : "client", f); TheGameLogic->getCRC(CRC_RECALC, AsciiString(nm)); printf("[um] deep CRC written to %s\n", nm); }
+			if ((unsigned)atoi(df) == f) { char nm[64]; sprintf(nm, "deepcrc_%s_%u.bin", m_role == UM_ROLE_SERVER ? "server" : "client", f); TheGameLogic->getCRC(CRC_RECALC, AsciiString(nm)); printf("[um] deep CRC written to %s\n", nm); char tn[64]; sprintf(tn, "deepobjs_%s_%u.txt", m_role == UM_ROLE_SERVER ? "server" : "client", f); if (FILE *tf = fopen(tn, "w")) { for (Object *o = TheGameLogic->getFirstObject(); o; o = o->getNextObject()) { const Coord3D *pp = o->getPosition(); fprintf(tf, "%u %s p%d %.3f %.3f %.3f\n", (unsigned)o->getID(), o->getTemplate()->getName().str(), o->getControllingPlayer() ? o->getControllingPlayer()->getPlayerIndex() : -1, pp->x, pp->y, pp->z); } fclose(tf); } }
 		if (m_role == UM_ROLE_SERVER)
 		{
 			Wr w; w.u32(f); Wr fr; frameMsg(fr, T_ADVANCE, w.b);       // clients may now execute frames < f

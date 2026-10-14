@@ -144,3 +144,11 @@ Terrain heights/LOS/cliff come from src/um/um_terrain.* (copied from BaseHeightM
 - Build from scratch: `scripts/setup.sh && scripts/build.sh && scripts/package-windows.sh` (EA source pinned in EA_SOURCE_SHA + `patches/zh-living-world.patch`).
 - Start spots: the invented start waypoints (large worlds on maps that define few starts) now avoid water, cliffs and steep ground with a buffer ring, stay apart from each other and
   away from the map edge; the buffer and spacing relax in steps when a map has little good ground. Server and clients compute them identically.
+
+## 0.0.1-alpha.3: desync after the 7th AI joined, bare zh_client.exe
+- Windows release reports: client sat in a game that diverged (CRC DIVERGED from frame 3630) and the retail main menu appeared when zh_client.exe was started by hand (its buttons, e.g. Options, crash).
+- Desync cause (reproduced in WSL with 45 slots, AI every 600 frames, epoch 9000): invented start spots were chosen inside `TerrainLogic::loadMap`, before `TerrainVisual::load` created the render
+  heightmap that `W3DTerrainLogic::getGroundHeight` reads, so every height was 0 and the "dry, flat ground" search saw a flat map. The server then re-ran it after its epoch save+reload (heights now real) and
+  disagreed with the client for spots that depended on terrain (first one: slot 27). Fix: choose the spots after the visual load (and drop `isCliffCell`, also render-side). 0 mismatches past frame 6600.
+- A bare zh_client.exe (no UM_CLIENT / UM_SERVER / UM_STANDALONE) now opens zh_launcher.exe next to it and exits.
+- Debug aids: UM_DEEPCRC_FRAME also writes deepobjs_<role>_<frame>.txt (id, template, owner, position); bind lines print the start waypoint used.
