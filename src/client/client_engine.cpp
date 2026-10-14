@@ -87,6 +87,7 @@ static void umClientTick()
 	}
 	static int applied = -2;
 	if (gUmServerMode || !TheGameLogic || !TheGameLogic->isInGame() || !ThePlayerList || !TheTacticalView) return;
+	if (TheShell && TheShell->isShellActive()) { TheShell->hideShell(); printf("[um] client: retail main menu hidden\n"); }   // joined while the engine was still showing its main menu: the retail path (MSG_NEW_GAME) that would hide it never runs
 	if (TheMouse && !TheMouse->getVisibility()) { TheMouse->setVisibility(TRUE); TheMouse->setCursor(Mouse::ARROW); printf("[um] client: cursor made visible\n"); }   // the retail code only does this when a load screen shows
 	int slot = UmNetMySlot();
 	static int centeredFor = -2;

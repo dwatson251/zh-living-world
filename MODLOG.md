@@ -159,3 +159,8 @@ Terrain heights/LOS/cliff come from src/um/um_terrain.* (copied from BaseHeightM
   fix is an allow/exclusion for the folder by the user, a false-positive submission to Microsoft, later code signing. No evasion tricks.
 - The "second launch shows the main menu" case: the client could not connect (server being killed and restarting), and the engine fell back to its retail main menu. The client now shows a "Could not connect" box and exits.
 - Exclusive fullscreen on the lab machine: one transient DEVICELOST on Present, recovers and plays.
+
+## 0.0.1-alpha.4: the main menu stayed on top of the game
+- With Defender out of the way the user still saw the retail main menu with dead buttons. Reproduced by starting the host and the client within seconds of each other at 1920x1080: the client joined
+  ("now playing as a seat holder", frames advancing, 0 mismatches) while the engine's own main menu was still on screen. The retail path that hides the shell (`MSG_NEW_GAME` -> `prepareNewGame`) never runs for a joined world.
+  Fast joins in earlier tests happened before the menu was pushed, so it never showed. Fix: `umClientTick` hides the shell as soon as the world is running. Verified by screenshot (base, control bar, $20000).
