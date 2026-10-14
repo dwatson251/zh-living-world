@@ -258,7 +258,12 @@ public:
 		m_sock = socket(AF_INET, SOCK_STREAM, 0);
 		sockaddr_in a; memset(&a, 0, sizeof(a)); a.sin_family = AF_INET; a.sin_port = htons((unsigned short)port);
 		a.sin_addr.s_addr = inet_addr(host);
-		if (connect(m_sock, (sockaddr *)&a, sizeof(a)) != 0) { printf("[um] client: connect to %s:%d failed (err %d)\n", host, port, WSAGetLastError()); closesocket(m_sock); m_sock = INVALID_SOCKET; return; }
+		if (connect(m_sock, (sockaddr *)&a, sizeof(a)) != 0) { int err = WSAGetLastError(); printf("[um] client: connect to %s:%d failed (err %d)\n", host, port, err); fflush(stdout); closesocket(m_sock); m_sock = INVALID_SOCKET;
+			{	// without a server there is nothing to play: the engine would fall back to its retail main menu, which this mod does not support
+				char msg[400]; sprintf(msg, "Could not connect to %s:%d (error %d).\n\nCheck that the server is running, the address and port are right, and that the server's firewall / port forwarding allows it. If the server keeps restarting, antivirus software may be stopping zh_client.exe on the server PC.", host, port, err);
+				MessageBoxA(NULL, msg, "Living World", MB_OK | MB_ICONWARNING | MB_TOPMOST | MB_SETFOREGROUND); ExitProcess(0);
+			}
+			return; }
 		unsigned long nb = 1; ioctlsocket(m_sock, FIONBIO, &nb);
 		char keybuf[64]; sprintf(keybuf, "key-%lu", (unsigned long)GetTickCount()); const char *key = getenv("UM_KEY") ? getenv("UM_KEY") : keybuf;
 		Wr h; h.u32(UM_MAGIC); h.u32(UM_VERSION); h.str(key);

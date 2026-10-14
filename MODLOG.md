@@ -152,3 +152,10 @@ Terrain heights/LOS/cliff come from src/um/um_terrain.* (copied from BaseHeightM
   disagreed with the client for spots that depended on terrain (first one: slot 27). Fix: choose the spots after the visual load (and drop `isCliffCell`, also render-side). 0 mismatches past frame 6600.
 - A bare zh_client.exe (no UM_CLIENT / UM_SERVER / UM_STANDALONE) now opens zh_launcher.exe next to it and exits.
 - Debug aids: UM_DEEPCRC_FRAME also writes deepobjs_<role>_<frame>.txt (id, template, owner, position); bind lines print the start waypoint used.
+
+## Windows report after alpha.3 (crash to desktop, main menu on 2nd launch, exclusive crash)
+- Cause found in the Defender operational log (events 1116/1117): Trojan:Win32/Zenpak.BAB!MTB ("MTB" = machine-learning), raised ~1 s after each zh_client.exe start and remediated (process terminated, exit code 0) ~12 s later;
+  they line up exactly with the host's "server exited (code 0x0); restarting" loop and with the client vanishing. The lab build folder is excluded, the downloaded folder is not. The exe is not malicious (built from source in CI);
+  fix is an allow/exclusion for the folder by the user, a false-positive submission to Microsoft, later code signing. No evasion tricks.
+- The "second launch shows the main menu" case: the client could not connect (server being killed and restarting), and the engine fell back to its retail main menu. The client now shows a "Could not connect" box and exits.
+- Exclusive fullscreen on the lab machine: one transient DEVICELOST on Present, recovers and plays.
