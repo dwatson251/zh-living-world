@@ -1,0 +1,8 @@
+build/
+deps/
+src-zh/
+worlds/
+world/
+*.o
+*.obj
+dsp_sources.cmake

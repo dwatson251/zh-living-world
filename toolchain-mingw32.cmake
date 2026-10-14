@@ -1,0 +1,8 @@
+set(CMAKE_SYSTEM_NAME Windows)
+set(CMAKE_SYSTEM_PROCESSOR i686)
+set(LLVM $ENV{LLVM_MINGW})
+set(CMAKE_C_COMPILER ${LLVM}/bin/i686-w64-mingw32-clang)
+set(CMAKE_CXX_COMPILER ${LLVM}/bin/i686-w64-mingw32-clang++)
+set(CMAKE_RC_COMPILER ${LLVM}/bin/i686-w64-mingw32-windres)
+set(CMAKE_AR ${LLVM}/bin/llvm-ar)
+set(CMAKE_RANLIB ${LLVM}/bin/llvm-ranlib)

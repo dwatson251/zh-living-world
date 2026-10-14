@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+"""make_public_tree.py <dest>: export this lab repo as the clean public source tree: our own code, the engine patch (not the EA source), setup/build/package scripts, CI.
+Absolute paths in the shim headers become @ROOT@/@LLVM@ placeholders that scripts/setup.sh fills in."""
+import os, re, shutil, subprocess, sys
+LAB = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEST = os.path.abspath(sys.argv[1])
+ROOT_ABS, LLVM_ABS = LAB, os.path.expanduser('~/tools/llvm-mingw-20261006')
+PRISTINE = os.path.expanduser('~/Code/CnC_Generals_Zero_Hour/GeneralsMD/Code')
+if os.path.exists(DEST): shutil.rmtree(DEST)
+os.makedirs(DEST)
+
+def copytree(src, dst, skip=lambda p: False):
+    for d, ds, fs in os.walk(src):
+        rel = os.path.relpath(d, src)
+        ds[:] = [x for x in ds if not skip(os.path.join(rel, x))]
+        for f in fs:
+            sp = os.path.join(d, f); dp = os.path.join(dst, rel, f)
+            if skip(os.path.join(rel, f)): continue
+            os.makedirs(os.path.dirname(dp), exist_ok=True)
+            if os.path.islink(sp):
+                open(dp + '.link', 'w').write(os.readlink(sp).replace(LLVM_ABS, '@LLVM@') + '\n'); continue
+            shutil.copy2(sp, dp)
+
+copytree(os.path.join(LAB, 'src'), os.path.join(DEST, 'src'))
+copytree(os.path.join(LAB, 'host'), os.path.join(DEST, 'host'))
+copytree(os.path.join(LAB, 'dist'), os.path.join(DEST, 'dist'))
+copytree(os.path.join(LAB, 'tools'), os.path.join(DEST, 'tools'), skip=lambda p: p.endswith('.pyc') or '__pycache__' in p)
+copytree(os.path.join(LAB, 'shim'), os.path.join(DEST, 'shim'))
+for f in ('CMakeLists.txt', 'client.cmake', 'sources.cmake', 'toolchain-mingw32.cmake', 'MODLOG.md'):
+    shutil.copy2(os.path.join(LAB, f), os.path.join(DEST, f))
+
+# placeholders in the shim headers
+for d, _, fs in os.walk(os.path.join(DEST, 'shim')):
+    for f in fs:
+        p = os.path.join(d, f)
+        try: t = open(p, encoding='latin-1').read()
+        except Exception: continue
+        n = t.replace(ROOT_ABS, '@ROOT@').replace(LLVM_ABS, '@LLVM@')
+        if n != t: open(p, 'w', encoding='latin-1', newline='').write(n)
+
+# CMake: the generated shim copy lives in build/shim; the toolchain comes from the environment
+for f in ('CMakeLists.txt', 'client.cmake', 'sources.cmake'):
+    p = os.path.join(DEST, f); t = open(p).read().replace('${CMAKE_SOURCE_DIR}/shim', '${CMAKE_SOURCE_DIR}/build/shim'); open(p, 'w').write(t)
+p = os.path.join(DEST, 'toolchain-mingw32.cmake'); t = open(p).read().replace('set(LLVM $ENV{HOME}/tools/llvm-mingw-20261006)', 'set(LLVM $ENV{LLVM_MINGW})'); open(p, 'w').write(t)
+
+# tools that must work anywhere: paths relative to the repository
+for f, a, b in (('tools/genvfs.py', "root='/home/dnlwtsn/Code/zh-living-world/src-zh/Code'", "ROOT=os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)),'..'))\nroot=ROOT+'/src-zh/Code'"),
+                ('tools/genvfs.py', "open('/home/dnlwtsn/Code/zh-living-world/build/vfs.yaml','w')", "open(ROOT+'/build/vfs.yaml','w')"),
+                ('tools/gensources.py', "R='/home/dnlwtsn/Code/zh-living-world'", "R=os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)),'..'))")):
+    p = os.path.join(DEST, f); t = open(p).read(); assert a in t, (f, a); open(p, 'w').write(t.replace(a, b))
+# gensources: relative paths are not needed (setup regenerates), but it must not print into the repo root
+# the engine patch, with repo-relative names (apply with: patch -p1 -d src-zh/Code)
+os.makedirs(os.path.join(DEST, 'patches'))
+tmp = '/tmp/zh_pubdiff'; shutil.rmtree(tmp, ignore_errors=True); os.makedirs(tmp)
+os.symlink(PRISTINE, tmp + '/a'); os.symlink(os.path.join(LAB, 'src-zh/Code'), tmp + '/b')
+out = subprocess.run(['diff', '-ruN', 'a', 'b'], cwd=tmp, capture_output=True).stdout
+open(os.path.join(DEST, 'patches/zh-living-world.patch'), 'wb').write(out)
+print('patch bytes', len(out))
+open(os.path.join(DEST, 'EA_SOURCE_SHA'), 'w').write(subprocess.run(['git', '-C', os.path.dirname(PRISTINE.rstrip('/').rsplit('/GeneralsMD', 1)[0] + '/x'), 'rev-parse', 'HEAD'], capture_output=True, text=True).stdout.strip() + '\n')
+shutil.copy2(os.path.expanduser('~/Code/CnC_Generals_Zero_Hour/LICENSE.md'), os.path.join(DEST, 'LICENSE'))
+open(os.path.join(DEST, '.gitignore'), 'w').write('build/\ndeps/\nsrc-zh/\nworlds/\nworld/\n*.o\n*.obj\n')
+print('exported to', DEST)

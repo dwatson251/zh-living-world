@@ -1,0 +1,7 @@
+#!/bin/bash
+# usage: syn2.sh <dir under src-zh/Code> [extra clang flags]; like syntax.sh but through the /vroot case-insensitive overlay (same flags as the real build)
+R=/home/dnlwtsn/Code/zh-living-world; C=$R/src-zh/Code; CXX=~/tools/llvm-mingw-20261006/bin/i686-w64-mingw32-clang++; V=/vroot
+INC="-I$R/shim -I$V/GameEngine/Include/Precompiled -I$V/GameEngine/Include -I$V/GameEngineDevice/Include -I$V/Main -I$V/Libraries/Source/Benchmark -I$V/Libraries/Include -I$V/Libraries/Source -I$V/Libraries/Source/WWVegas -I$V/Libraries/Source/WWVegas/WWLib -I$V/Libraries/Source/WWVegas/WWMath -I$V/Libraries/Source/WWVegas/WWDebug -I$V/Libraries/Source/WWVegas/WWSaveLoad -I$V/Libraries/Source/WWVegas/Wwutil -I$V/Libraries/Source/WWVegas/WW3D2 -I$V/Libraries/Source/Compression -I$R/src $EXTRA"
+rm -f $R/build/syn/*.log
+find "$( [[ $1 == /* ]] && echo $1 || echo $C/$1 )" -name '*.cpp' | xargs -P 20 -I{} bash -c 'f={}; n=$(echo ${f#'$C'/} | tr / _); timeout 90 '$CXX' -std=gnu++98 -w -fpermissive -fms-extensions -fms-compatibility -U_MSC_VER -U_MSC_FULL_VER -U_MSC_BUILD -D__GNUC__=4 -D__GNUC_MINOR__=2 -DWIN32 -D_WINDOWS -DNDEBUG -DZ_PREFIX -DUM_MAX_PLAYERS=128 ${CLIENT:+-DUM_CLIENT} -DIG_DEBUG_STACKTRACE -DRELEASE_DEBUG_LOGGING -Xclang -fno-wchar -fasm-blocks -Wno-address-of-temporary -ivfsoverlay '$R'/build/vfs.yaml -include '$R'/shim/compat.h -fsyntax-only -ferror-limit=5 '"$INC"' $f > '$R'/build/syn/$n.log 2>&1; echo "$? $n"' > $R/build/syn/summary.txt
+awk '{c[$1==0?"ok":"fail"]++} END{for(k in c)print k,c[k]}' $R/build/syn/summary.txt

@@ -1,0 +1,98 @@
+name: Release
+
+# Pushing a tag such as 0.0.1-alpha.1 builds the Windows package and publishes it as a GitHub release
+# (a pre-release when the tag has a "-" suffix). "Run workflow" builds the package and keeps it as an artifact only.
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows-package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      LW_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ninja-build cmake patch xz-utils python3
+
+      - name: Cache the toolchain and the EA source
+        uses: actions/cache@v4
+        with:
+          path: deps
+          key: deps-${{ hashFiles('EA_SOURCE_SHA', 'scripts/setup.sh') }}
+
+      - name: Fetch EA's released source, apply our patch, get the toolchain
+        run: scripts/setup.sh
+
+      - name: Build the game client/server, launcher and host (cross-compiled for Windows)
+        run: scripts/build.sh
+
+      - name: Package for Windows
+        run: scripts/package-windows.sh
+
+      - name: Check the package
+        run: |
+          zip=$(ls build/dist/LivingWorld-*-win-x86.zip)
+          echo "package: $zip"
+          ZIP="$zip" python3 - <<'PY'
+          import os, sys, zipfile
+          z = zipfile.ZipFile(os.environ["ZIP"])
+          names = set(z.namelist())
+          need = ["LivingWorld/zh_client.exe", "LivingWorld/zh_launcher.exe", "LivingWorld/zh_host.exe",
+                  "LivingWorld/um_server.ini", "LivingWorld/README.txt", "LivingWorld/version.txt"]
+          missing = [n for n in need if n not in names]
+          bad = [n for n in names if n.lower().endswith((".big", ".w3d", ".tga", ".dds", ".bik", ".wav", ".mp3", ".ini")) and not n.endswith("um_server.ini")]
+          print("entries:", sorted(names))
+          if missing or bad:
+              print("MISSING:", missing, "GAME FILES:", bad)
+              sys.exit(1)
+          print(len(names), "files, all expected entries present, no game data")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LivingWorld-win-x86
+          path: build/dist/LivingWorld-*-win-x86.zip
+          if-no-files-found: error
+
+      - name: Publish the release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          zip=$(ls build/dist/LivingWorld-*-win-x86.zip)
+          cat > release-notes.md <<EOF
+          Living World ${TAG}: a persistent, join-any-time Command & Conquer Generals: Zero Hour world on a dedicated server.
+
+          **Download \`$(basename "$zip")\`, unzip it anywhere, and run \`zh_launcher.exe\`.**
+          You need your own copy of Zero Hour (Steam or EA App); this package contains no game data. Windows 10 or 11.
+
+          - **Play**: type the server address (ask whoever runs it), pick a name, faction and colour, press *Start*.
+          - **Host a world on your PC**: run \`zh_host.exe\` (window) or \`zh_host.exe --cli\`; settings live in \`um_server.ini\`. A status page runs at http://localhost:8080/.
+          - If Windows Defender flags \`zh_client.exe\` it is a false positive on an unsigned custom build; the README explains how to allow it.
+
+          This is an early alpha cross-compiled on Linux. Please report problems at https://github.com/${REPO}/issues
+          (attach \`um_client_log.txt\` and \`um_client_trace.txt\` from your Zero Hour folder, or the server's \`server_log.txt\`).
+
+          **Source and license (GPL-3.0).** The engine is the source EA released for Zero Hour; this repository holds our patch, the client, server and launcher code and the build
+          scripts. \`scripts/setup.sh\` downloads EA's source at the commit pinned in \`EA_SOURCE_SHA\` and applies the patch. Tag
+          [${TAG}](https://github.com/${REPO}/tree/${TAG}). Not affiliated with or endorsed by EA.
+          EOF
+          sed -i 's/^          //' release-notes.md
+          flags=""
+          case "$TAG" in *-*) flags="--prerelease";; esac
+          gh release create "$TAG" "$zip" --title "Living World $TAG" --notes-file release-notes.md --verify-tag $flags

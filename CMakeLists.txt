@@ -1,0 +1,21 @@
+cmake_minimum_required(VERSION 3.20)
+project(zh_living_world CXX C)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CODE ${CMAKE_SOURCE_DIR}/src-zh/Code)
+set(CMAKE_CXX_STANDARD 98)
+set(CMAKE_CXX_EXTENSIONS ON)
+if(UM_CLIENT_BUILD)
+  set(UM_MODE_FLAGS "-DUM_CLIENT -fno-omit-frame-pointer")
+endif()
+set(CMAKE_CXX_FLAGS "${UM_MODE_FLAGS} -w -fpermissive -fms-extensions -fms-compatibility -U_MSC_VER -U_MSC_FULL_VER -U_MSC_BUILD -D__GNUC__=4 -D__GNUC_MINOR__=2 -DWIN32 -D_WINDOWS -DNDEBUG -DZ_PREFIX -DUM_MAX_PLAYERS=128 -DIG_DEBUG_STACKTRACE -DRELEASE_DEBUG_LOGGING -Xclang -fno-wchar -fasm-blocks -Wno-address-of-temporary -ferror-limit=20 -ivfsoverlay ${CMAKE_SOURCE_DIR}/build/vfs.yaml -include ${CMAKE_SOURCE_DIR}/build/shim/compat.h -gline-tables-only -fno-strict-aliasing -fno-delete-null-pointer-checks -ffp-contract=off")
+set(V /vroot)
+set(INCS ${CMAKE_SOURCE_DIR}/build/shim ${V}/GameEngine/Include/Precompiled ${V}/GameEngine/Include ${V}/GameEngineDevice/Include
+  ${V}/Libraries/Include ${V}/Libraries/Source ${V}/Libraries/Source/WWVegas ${V}/Libraries/Source/WWVegas/WWLib
+  ${V}/Libraries/Source/WWVegas/WWMath ${V}/Libraries/Source/WWVegas/WWDebug ${V}/Libraries/Source/WWVegas/WWSaveLoad
+  ${V}/Libraries/Source/WWVegas/Wwutil ${V}/Libraries/Source/WWVegas/WW3D2 ${V}/Libraries/Source/Compression)
+include_directories(${INCS})
+if(UM_CLIENT_BUILD)
+  include(client.cmake)
+else()
+  include(sources.cmake)
+endif()
