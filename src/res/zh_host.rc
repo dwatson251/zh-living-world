@@ -1,0 +1,33 @@
+#include <windows.h>
+#define VER_NUM 0,0,1,0
+#define VER_STR "0.0.1\0"
+
+1 ICON "zh_host.ico"
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION VER_NUM
+ PRODUCTVERSION VER_NUM
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS 0x0L
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+ FILESUBTYPE 0x0L
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904b0"
+    BEGIN
+      VALUE "CompanyName", "Living World project\0"
+      VALUE "FileDescription", "Living World server host\0"
+      VALUE "FileVersion", VER_STR
+      VALUE "InternalName", "zh_host\0"
+      VALUE "LegalCopyright", "GPL-3.0; built on the source EA released for Zero Hour. Not affiliated with EA.\0"
+      VALUE "OriginalFilename", "zh_host.exe\0"
+      VALUE "ProductName", "Living World for Command & Conquer Generals: Zero Hour\0"
+      VALUE "ProductVersion", VER_STR
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END

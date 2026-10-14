@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(zh_living_world CXX C)
+project(zh_living_world CXX C RC)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CODE ${CMAKE_SOURCE_DIR}/src-zh/Code)
 set(CMAKE_CXX_STANDARD 98)

@@ -176,7 +176,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR cmdLine, int show)
 	char dir[MAX_PATH]; if (SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, dir) != S_OK) strcpy(dir, ".");
 	std::string folder = std::string(dir) + "\\LivingWorld"; CreateDirectoryA(folder.c_str(), NULL); strcpy(gIni, (folder + "\\client.ini").c_str());
 	for (int i = 0; i < 16; ++i) gCustom[i] = RGB(i * 16, 255 - i * 16, (i * 37) & 255);
-	WNDCLASSA wc; memset(&wc, 0, sizeof wc); wc.lpfnWndProc = proc; wc.hInstance = inst; wc.hCursor = LoadCursor(NULL, IDC_ARROW); wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1); wc.lpszClassName = "LivingWorldLauncher";
+	WNDCLASSA wc; memset(&wc, 0, sizeof wc); wc.lpfnWndProc = proc; wc.hInstance = inst; wc.hCursor = LoadCursor(NULL, IDC_ARROW); wc.hIcon = LoadIcon(inst, MAKEINTRESOURCE(1)); wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1); wc.lpszClassName = "LivingWorldLauncher";
 	RegisterClassA(&wc);
 	RECT r = { 0, 0, 420, 330 }; AdjustWindowRect(&r, WS_CAPTION | WS_SYSMENU, FALSE);
 	HWND w = CreateWindowA("LivingWorldLauncher", "Living World", WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, NULL, NULL, inst, NULL);

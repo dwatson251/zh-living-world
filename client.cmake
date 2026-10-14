@@ -28,7 +28,7 @@ file(GLOB UM_CPP ${CMAKE_SOURCE_DIR}/src/null/NullAudioManager.cpp ${CMAKE_SOURC
 include_directories(${CMAKE_SOURCE_DIR}/src ${V}/Main ${V}/Libraries/Source/Benchmark)
 add_library(um OBJECT ${UM_CPP})
 
-add_executable(zh_client $<TARGET_OBJECTS:ge> $<TARGET_OBJECTS:ww> $<TARGET_OBJECTS:ww3d> $<TARGET_OBJECTS:dev> $<TARGET_OBJECTS:zlibobj> $<TARGET_OBJECTS:comp> $<TARGET_OBJECTS:um>)
+add_executable(zh_client ${CMAKE_SOURCE_DIR}/src/res/zh_client.rc $<TARGET_OBJECTS:ge> $<TARGET_OBJECTS:ww> $<TARGET_OBJECTS:ww3d> $<TARGET_OBJECTS:dev> $<TARGET_OBJECTS:zlibobj> $<TARGET_OBJECTS:comp> $<TARGET_OBJECTS:um>)
 target_link_libraries(zh_client ws2_32 winmm imagehlp ole32 oleaut32 uuid shlwapi advapi32 user32 gdi32 shell32 version wininet comdlg32 vfw32 psapi imm32 d3d8 ddraw dinput8 dxguid)
 target_link_directories(zh_client PRIVATE ${CMAKE_SOURCE_DIR}/build/shim/lib)
 target_link_options(zh_client PRIVATE -static -mwindows -Wl,--disable-dynamicbase -Wl,--image-base=0x400000 -Wl,--wrap=exit -Wl,--wrap=abort -Wl,--error-limit=0 -Wl,-Map=${CMAKE_BINARY_DIR}/zhc.map)
@@ -37,12 +37,12 @@ set_source_files_properties(${CODE}/Libraries/Source/WWVegas/WWDownload/Download
   PROPERTIES COMPILE_FLAGS "-I/vroot/Libraries/Source/WWVegas/WWDownload")
 
 # Standalone launcher (plain Win32, no engine code).
-add_executable(zh_launcher src/launcher/launcher.cpp)
+add_executable(zh_launcher src/launcher/launcher.cpp src/res/zh_launcher.rc)
 set_target_properties(zh_launcher PROPERTIES COMPILE_FLAGS "")
 target_link_libraries(zh_launcher user32 gdi32 comdlg32 comctl32 shell32 ole32 advapi32)
 target_link_options(zh_launcher PRIVATE -static -mwindows)
 
 # Server host: window or --cli supervisor for the dedicated server (zh_client.exe in server mode).
-add_executable(zh_host src/host/host.cpp)
+add_executable(zh_host src/host/host.cpp src/res/zh_host.rc)
 target_link_libraries(zh_host user32 gdi32 comctl32 shell32 ole32 advapi32 ws2_32)
 target_link_options(zh_host PRIVATE -static -mwindows)

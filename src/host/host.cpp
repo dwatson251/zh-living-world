@@ -473,7 +473,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int show)
 	}
 	{ Config cfg = loadConfig(gIniPath); gRunner.worldDir = absPath(cfg["world_dir"], gHostDir); CreateDirectoryA(gRunner.worldDir.c_str(), NULL); gLogFile = gRunner.worldDir + "\\host_log.txt"; }
 	INITCOMMONCONTROLSEX ic = { sizeof ic, ICC_STANDARD_CLASSES }; InitCommonControlsEx(&ic);
-	WNDCLASSA wc; memset(&wc, 0, sizeof wc); wc.lpfnWndProc = proc; wc.hInstance = inst; wc.hCursor = LoadCursor(NULL, IDC_ARROW); wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1); wc.lpszClassName = "LivingWorldHost";
+	WNDCLASSA wc; memset(&wc, 0, sizeof wc); wc.lpfnWndProc = proc; wc.hInstance = inst; wc.hCursor = LoadCursor(NULL, IDC_ARROW); wc.hIcon = LoadIcon(inst, MAKEINTRESOURCE(1)); wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1); wc.lpszClassName = "LivingWorldHost";
 	RegisterClassA(&wc);
 	RECT r = { 0, 0, 900, 24 * kNumSettings + 90 }; AdjustWindowRect(&r, WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, FALSE);
 	gWnd = CreateWindowA("LivingWorldHost", "Living World server", WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, NULL, NULL, inst, NULL);
