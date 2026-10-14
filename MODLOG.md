@@ -142,3 +142,5 @@ Terrain heights/LOS/cliff come from src/um/um_terrain.* (copied from BaseHeightM
 - `zh_host.exe`: one program for hosting: window (settings, Start/Stop, log, players, uptime) or `--cli`; restarts the server from its saved world; status page.
 - Scale: 56 AI + 4 seats on Tournament Continent ran at roughly 15-20 logic frames per second on the development machine (WSL2 host, early game); 32 AI held 30.
 - Build from scratch: `scripts/setup.sh && scripts/build.sh && scripts/package-windows.sh` (EA source pinned in EA_SOURCE_SHA + `patches/zh-living-world.patch`).
+- Start spots: the invented start waypoints (large worlds on maps that define few starts) now avoid water, cliffs and steep ground with a buffer ring, stay apart from each other and
+  away from the map edge; the buffer and spacing relax in steps when a map has little good ground. Server and clients compute them identically.

@@ -3450,7 +3450,7 @@ diff -ruN a/GameEngine/Source/GameLogic/Map/PolygonTrigger.cpp b/GameEngine/Sour
  	}
 diff -ruN a/GameEngine/Source/GameLogic/Map/TerrainLogic.cpp b/GameEngine/Source/GameLogic/Map/TerrainLogic.cpp
 --- a/GameEngine/Source/GameLogic/Map/TerrainLogic.cpp	2026-10-13 16:49:45.037305032 +0100
-+++ b/GameEngine/Source/GameLogic/Map/TerrainLogic.cpp	2026-10-14 09:33:57.332981900 +0100
++++ b/GameEngine/Source/GameLogic/Map/TerrainLogic.cpp	2026-10-14 20:58:20.389842163 +0100
 @@ -274,7 +274,7 @@
  	// get the template of the bridge
  	TerrainRoadType *bridgeTemplate = TheTerrainRoads->findBridge( bridgeTemplateName );
@@ -3486,7 +3486,7 @@ diff -ruN a/GameEngine/Source/GameLogic/Map/TerrainLogic.cpp b/GameEngine/Source
  			if( c )
  				strippedCompareMapNameOnly.set( c );
  			else
-@@ -1288,6 +1288,31 @@
+@@ -1288,6 +1288,66 @@
  		// Eat the error - legacy files are not valid chunk format (and don't have waypoint info.)
  		DEBUG_LOG(("Unable to read waypoint info."));
  	}
@@ -3502,16 +3502,51 @@ diff -ruN a/GameEngine/Source/GameLogic/Map/TerrainLogic.cpp b/GameEngine/Source
 +		Region3D ext; getExtent(&ext);
 +		Int cols = 1; while (cols * cols < n) ++cols;
 +		Real cw = (ext.hi.x - ext.lo.x) / cols, ch = (ext.hi.y - ext.lo.y) / cols;
++		std::vector<Coord3D> taken;   // start spots already decided (map-defined ones included), to keep new ones apart
++		for (Int k = 1; k <= have; ++k) { nm.format("Player_%d_Start", k); if (Waypoint *w = getWaypointByName(nm)) taken.push_back(*w->getLocation()); }
++		Int moved = 0, forced = 0;
 +		for (Int k = have + 1; k <= n; ++k)
 +		{
 +			Int gx = (k - 1) % cols, gy = (k - 1) / cols;
 +			Coord3D loc; loc.x = ext.lo.x + cw * (gx + 0.5f); loc.y = ext.lo.y + ch * (gy + 0.5f); loc.z = getGroundHeight(loc.x, loc.y);
++			// A base needs dry, flat, passable ground with room around it: look outward from the grid cell centre for the nearest spot where the
++			// centre and a ring of points around it (the buffer) are above water, off cliffs and not steep, away from the map edge and from other starts.
++			{
++				const Real levels[3][2] = { { 140.0f, 280.0f }, { 100.0f, 220.0f }, { 60.0f, 160.0f } };   // buffer radius, spacing: relaxed when the map has little good ground
++				const Real edge = 220.0f; Coord3D best = loc; Bool found = FALSE;
++				const Real maxR = (cw > ch ? cw : ch) * 0.9f;
++				for (Int lv = 0; lv < 3 && !found; ++lv)
++				{
++				const Real buffer = levels[lv][0], apart = levels[lv][1];
++				for (Real r = 0; r <= maxR && !found; r += 35.0f)
++				{
++					Int steps = r == 0 ? 1 : 16;
++					for (Int a = 0; a < steps && !found; ++a)
++					{
++						Real ang = a * (6.2831853f / 16.0f); Coord3D c; c.x = loc.x + r * cosf(ang); c.y = loc.y + r * sinf(ang);
++						if (c.x < ext.lo.x + edge || c.x > ext.hi.x - edge || c.y < ext.lo.y + edge || c.y > ext.hi.y - edge) continue;
++						Bool ok = TRUE;
++						for (Int q = 0; q < 9 && ok; ++q)
++						{
++							Real px = c.x, py = c.y; if (q > 0) { Real qa = (q - 1) * (6.2831853f / 8.0f); px += buffer * cosf(qa); py += buffer * sinf(qa); }
++							Coord3D normal; Real z = getGroundHeight(px, py, &normal);
++							if (isUnderwater(px, py) || isCliffCell(px, py) || normal.z < 0.92f) ok = FALSE;
++						}
++						for (size_t t = 0; t < taken.size() && ok; ++t) { Real dx = c.x - taken[t].x, dy = c.y - taken[t].y; if (dx * dx + dy * dy < apart * apart) ok = FALSE; }
++						if (ok) { best = c; best.z = getGroundHeight(c.x, c.y); found = TRUE; }
++					}
++				}
++				}
++				if (found) { if (best.x != loc.x || best.y != loc.y) ++moved; loc = best; } else ++forced;
++				taken.push_back(loc);
++			}
 +			nm.format("Player_%d_Start", k);
 +			Waypoint *pWay = newInstance(Waypoint)((WaypointID)(900000 + k), nm, &loc, AsciiString::TheEmptyString, AsciiString::TheEmptyString, AsciiString::TheEmptyString, FALSE);
 +			pWay->setNext(m_waypointListHead);
 +			m_waypointListHead = pWay;
 +		}
 +		DEBUG_LOG(("UM_SYNTH_STARTS: %d start waypoints (map defined %d), grid %dx%d over %.0fx%.0f\n", n, have, cols, cols, ext.hi.x - ext.lo.x, ext.hi.y - ext.lo.y));
++		printf("[um] start spots: %d invented, %d moved off water/cliffs/steep ground, %d could not be improved\n", n - have, moved, forced);
 +	}
 +#endif
 +
