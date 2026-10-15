@@ -31,6 +31,7 @@ static const Setting kSettings[] = {
 	{ "max_ai",                 "Max AI players at once",           "16",               "--max-ai",             "world" },
 	{ "start_ai",               "AI players at world start",        "4",                "--start-ai",           "world" },
 	{ "ai_pool",                "AI seats (at least max AI)",       "24",               "--ai-pool",            "world" },
+	{ "game_speed",             "Game speed (15-60, default 30)",   "30",               "--game-speed",         "world" },
 	{ "ai_join_secs",           "Seconds between AI joining",       "20",               "--ai-join-secs",       "world" },
 	{ "epoch_secs",             "Save the world every (seconds)",   "300",              "--epoch-secs",         "world" },
 	{ "start_cash",             "Starting cash",                    "10000",            "--start-cash",         "rules" },
@@ -95,6 +96,12 @@ static Config loadConfig(const std::string &ini)
 	}
 	Config c;
 	for (int i = 0; i < kNumSettings; ++i) { std::map<std::string, std::string>::iterator it = raw.find(std::string(kSettings[i].section) + "." + kSettings[i].key); c[kSettings[i].key] = it != raw.end() ? it->second : kSettings[i].def; }
+	// LW_<SETTING> environment variables (LW_PORT, LW_MAX_AI, LW_GAME_DIR ...) sit between the file and the command line: this is how the Docker image is configured
+	for (int i = 0; i < kNumSettings; ++i)
+	{
+		std::string name = std::string("LW_") + kSettings[i].key; for (size_t k = 0; k < name.size(); ++k) name[k] = (char)toupper((unsigned char)name[k]);
+		const char *v = getenv(name.c_str()); if (v && *v) c[kSettings[i].key] = v;
+	}
 	if (c["game_dir"].empty()) c["game_dir"] = detectGameDir();
 	return c;
 }
@@ -139,7 +146,7 @@ struct Runner
 		if (gd.empty() || !fileExists(gd + "\\INIZH.big")) { why = "The Zero Hour folder is not set or does not contain INIZH.big."; return false; }
 		if (!fileExists(serverExe())) { why = "zh_client.exe was not found next to the host program."; return false; }
 		int total = 1 + num(c, "start_ai", 4) + num(c, "max_players", 16) + std::max(num(c, "ai_pool", 24), num(c, "max_ai", 16));
-		if (total > 64) { char b[160]; sprintf(b, "Too many seats: 1 observer + start AI + players + AI pool = %d, the engine allows 64.", total); why = b; return false; }
+		if (total > 129) { char b[160]; sprintf(b, "Too many seats: 1 observer + start AI + players + AI pool = %d, the engine allows 129 (the observer plus 128 players).", total); why = b; return false; }
 		return true;
 	}
 
@@ -168,6 +175,7 @@ struct Runner
 		sprintf(b, "%d", pool); env.push_back(std::string("UM_AI_POOL=") + b);
 		sprintf(b, "%d", maxAi); env.push_back(std::string("UM_AI_MAX=") + b);
 		sprintf(b, "%d", startAi + players + pool); env.push_back(std::string("UM_SYNTH_STARTS=") + b);
+		{ int sp = num(cfg, "game_speed", 30); if (sp < 15) sp = 15; if (sp > 60) sp = 60; sprintf(b, "%d", sp); env.push_back(std::string("UM_GAME_SPEED=") + b); }
 		sprintf(b, "%d", num(cfg, "ai_join_secs", 20) * 30); env.push_back(std::string("UM_AI_JOIN_FRAMES=") + b);
 		sprintf(b, "%d", num(cfg, "epoch_secs", 300) * 30); env.push_back(std::string("UM_EPOCH=") + b);
 		env.push_back("UM_START_CASH=" + cfg["start_cash"]);

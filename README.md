@@ -7,6 +7,8 @@ bases left behind are cleaned up after a while; rent keeps the world turning ove
   server address, Start). You need your own copy of Zero Hour (Steam, EA app or the Ultimate Collection); the launcher finds it. If Windows Defender flags `zh_client.exe`, it is a false positive
   on an unsigned build: allow it or exclude the folder (details in the README inside the zip).
 - **Hosts**: `zh_host.exe` (window with Start/Stop, log, players, uptime) or `zh_host.exe --cli`. Settings: `um_server.ini`; every option is also a command-line flag.
+- **Size**: up to 128 players (human seats plus AI) and an observer. `Maps\Living World Grand\Living World Grand.map` is an 8000-unit map with 128 start spots; the server builds it from your own Tournament Desert the first
+  time it is asked for (nothing is shipped; clients get it inside the world snapshot). Game speed is a server setting (15-60, default 30).
 - **How it works**: the server is the same program as the client (`zh_client.exe` with `UM_SERVER` set, window hidden, a Direct3D that draws nothing). It runs the real game logic and
   render-object code, orders every command, and saves the world as periodic snapshots plus a command log; clients are lock-step replicas that join from a snapshot and are checked
   against the server every second. See `MODLOG.md` for the porting notes (clang/mingw build of EA's source, determinism fixes, the 128-player widening).

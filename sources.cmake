@@ -21,7 +21,7 @@ add_library(comp OBJECT ${CMP}/CompressionManager.cpp ${EAC_CPP})
 
 file(GLOB_RECURSE UM_CPP ${CMAKE_SOURCE_DIR}/src/*.cpp)
 include_directories(${CMAKE_SOURCE_DIR}/src)
-list(FILTER UM_CPP EXCLUDE REGEX "headless_main|src/client/|src/launcher/")
+list(FILTER UM_CPP EXCLUDE REGEX "headless_main|src/client/|src/launcher/|src/host/")
 add_library(um OBJECT ${UM_CPP})
 
 # Device-layer files the headless sim needs (map loading, terrain logic, ghost objects).

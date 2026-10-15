@@ -73,9 +73,13 @@ static DWORD WINAPI hangWatch(LPVOID)
 	{
 		Sleep(2000);
 		LONG now = gBeat;
+		static const bool sampling = getenv("UM_SAMPLE") != NULL; static int sampleNo = 0;   // profiling aid: record the main thread's stack every 2 s (um_client_sample_N.bin)
+		if (!sampling) {
 		if (now != last) { last = now; still = 0; continue; }
 		if (++still < 6 || !gMainThread) continue;
 		if (still > 6) continue;   // once per hang
+		}
+		else if (sampleNo >= 12) continue;
 		SuspendThread(gMainThread);
 		CONTEXT ctx; memset(&ctx, 0, sizeof ctx); ctx.ContextFlags = CONTEXT_FULL;
 		if (GetThreadContext(gMainThread, &ctx))
@@ -85,7 +89,8 @@ static DWORD WINAPI hangWatch(LPVOID)
 			DWORD *esp = (DWORD *)ctx.Esp; for (int i = 0; i < 1024; ++i) rec[6 + i] = IsBadReadPtr(esp + i, 4) ? 0 : esp[i];
 			{ HMODULE m = NULL; GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)ctx.Eip, &m); rec[6 + 1024] = (DWORD)m; rec[6 + 1025] = ctx.Ebp; }
 			DWORD *fp = (DWORD *)ctx.Ebp; for (int i = 0; i < 64; ++i) { DWORD ret = 0; if (fp && !IsBadReadPtr(fp, 8)) { ret = fp[1]; fp = (DWORD *)fp[0]; } else fp = NULL; rec[6 + 1032 + i] = ret; }
-			HANDLE h = CreateFileA("um_client_hang.bin", GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+			char fname[64]; if (sampling) sprintf(fname, "um_client_sample_%d.bin", sampleNo++); else strcpy(fname, "um_client_hang.bin");
+			HANDLE h = CreateFileA(fname, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 			if (h != INVALID_HANDLE_VALUE) { DWORD w; WriteFile(h, rec, sizeof rec, &w, NULL); CloseHandle(h); }
 		}
 		ResumeThread(gMainThread);

@@ -1,7 +1,7 @@
 #!/bin/bash
-# lw_run.sh <seconds-before-screenshot> [client args...]: kill leftovers (by exact PID), start a W3D server on a small map and one graphical client, screenshot the client.
+# lw_run.sh <seconds-before-screenshot> [client args...]: kill leftovers of its own earlier runs (exact PIDs of build\\cl exes only: never the user's playtest processes), start a W3D server on a small map and one graphical client, screenshot the client.
 R=/home/dnlwtsn/Code/zh-living-world; G="/mnt/e/SteamLibrary/steamapps/common/Command & Conquer Generals - Zero Hour"; cd $R
-for p in $(powershell.exe -NoProfile -Command "Get-Process zh_client,zh_headless -ErrorAction SilentlyContinue | ForEach-Object { \$_.Id }" | tr -d '\r'); do /home/dnlwtsn/Code/universal-modder/bin/um win kill $p > /dev/null; done
+for p in $(powershell.exe -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='zh_client.exe' or Name='zh_headless.exe'\" | Where-Object { \$_.ExecutablePath -like '*zh-living-world\\build\\cl\\*' } | ForEach-Object { \$_.ProcessId }" | tr -d '\r'); do /home/dnlwtsn/Code/universal-modder/bin/um win kill $p > /dev/null; done
 sleep 3; rm -f "$G"/um_*log.txt "$G"/um_client_crash.* "$G"/um_client_trace.txt
 timeout 30 tools/winproc.sh build/cl/zh_client.exe "$G" server UM_SERVER=7792 UM_NULLD3D=1 UM_LOGFILE=um_server_log.txt UM_HUMAN_SLOTS=${HUMANS:-4} UM_SYNTH_STARTS=${SYNTH:-8} "UM_SKIRMISH_MAP=${MAP:-Maps\\Tournament Desert\\Tournament Desert.map}" UM_SKIRMISH_AI=${AI:-4} ${EXTRA_SERVER_ENV} -- -win -noshellmap -xres 800 -yres 600 > /dev/null
 for i in $(seq 1 60); do grep -aq "listening on port" "$G/um_server_log.txt" 2>/dev/null && break; sleep 1; done; sleep 3

@@ -3,6 +3,8 @@
 #include <winsock.h>
 #include "ZLib/zlib.h"
 #include "Common/GameState.h"
+#include "Common/XferCRC.h"
+#include "Common/XferDeepCRC.h"
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
 #include "Common/NameKeyGenerator.h"
@@ -10,6 +12,7 @@
 #include "Common/Money.h"
 #include "Common/PlayerTemplate.h"
 #include "Common/GameEngine.h"
+#include "GameClient/MapUtil.h"
 #include "Common/MessageStream.h"
 #include "Common/GlobalData.h"
 #include "Common/MultiplayerSettings.h"
@@ -47,7 +50,8 @@ struct Rd {
 
 enum { T_HELLO = 1, T_WORLD, T_FRAME, T_ADVANCE, T_CMD, T_CRC, T_CRCRESULT, T_EPOCH, T_WELCOME, T_KICK };
 const unsigned UM_MAGIC = 0x574C4D55; // 'UMLW'
-const unsigned UM_VERSION = 2;
+const unsigned UM_VERSION = 3;
+static const unsigned UM_WORLD_FILE_MAGIC = 0x31574d55;   // "UMW1": world.bin written with the speed field
 
 bool isNetCommand(const GameMessage *m)
 {
@@ -110,12 +114,12 @@ GameMessage *getMessage(Rd &r)
 
 void putWorld(Wr &w, const UmWorldDesc &d)
 {
-	w.str(d.map); w.i32(d.seed); w.i32(d.synthStarts); w.u32((unsigned)d.slots.size());
+	w.str(d.map); w.i32(d.seed); w.i32(d.synthStarts); w.i32(d.speed); w.u32((unsigned)d.slots.size());
 	for (size_t i = 0; i < d.slots.size(); ++i) { const UmSlotDesc &s = d.slots[i]; w.i32(s.state); w.i32(s.tmpl); w.i32(s.color); w.i32(s.startPos); w.i32(s.team); w.str(s.name); w.i32(s.profT); w.u32(s.rgb); w.str(s.nick); }
 }
-bool getWorld(Rd &r, UmWorldDesc &d)
+bool getWorld(Rd &r, UmWorldDesc &d, bool speedField = true)
 {
-	d.map = r.str(); d.seed = r.i32(); d.synthStarts = r.i32(); unsigned n = r.u32(); d.slots.clear();
+	d.map = r.str(); d.seed = r.i32(); d.synthStarts = r.i32(); d.speed = speedField ? r.i32() : 30; if (d.speed < 15 || d.speed > 60) d.speed = 30; unsigned n = r.u32(); d.slots.clear();
 	for (unsigned i = 0; i < n && !r.bad; ++i) { UmSlotDesc s; s.state = r.i32(); s.tmpl = r.i32(); s.color = r.i32(); s.startPos = r.i32(); s.team = r.i32(); s.name = r.str(); s.profT = r.i32(); s.rgb = r.u32(); s.nick = r.str(); d.slots.push_back(s); }
 	return !r.bad;
 }
@@ -196,9 +200,10 @@ void UmStartWorld(const UmWorldDesc &w)
 		s.setState((SlotState)d.state, name); s.setPlayerTemplate(d.tmpl); s.setColor(d.color); s.setStartPos(d.startPos); s.setTeamNumber(d.team);
 		TheSkirmishGameInfo->setSlot((Int)i, s);
 	}
-	TheSkirmishGameInfo->setMap(AsciiString(w.map.c_str()));
+	AsciiString mapName = TheMapCache->umResolveName(AsciiString(w.map.c_str()));   // maps in Documents\...\Maps are cached under their full path
+	TheSkirmishGameInfo->setMap(mapName);
 	TheSkirmishGameInfo->setSeed(w.seed);
-	TheWritableGlobalData->m_mapName = AsciiString(w.map.c_str());
+	TheWritableGlobalData->m_mapName = mapName;
 	TheSkirmishGameInfo->startGame(0);
 	InitGameLogicRandom(TheSkirmishGameInfo->getSeed());
 	GameMessage *msg = TheMessageStream->appendMessage(GameMessage::MSG_NEW_GAME);
@@ -216,7 +221,7 @@ class UmNet : public NullNetworkBase
 {
 public:
 	UmNet(UmRole role) : m_role(role), m_listen(INVALID_SOCKET), m_sock(INVALID_SOCKET), m_ready(FALSE), m_started(false), m_limit(0), m_pendingCount(0),
-		m_lastFrame(0xffffffff), m_nextTick(0), m_nextConnId(1), m_mismatches(0), m_crcChecked(0), m_gotWorld(false), m_localDropped(0), m_uncapped(getenv("UM_UNCAPPED") != NULL), m_epochFrame(0), m_epochRaw(0), m_epochInterval(getenv("UM_EPOCH") ? (unsigned)atoi(getenv("UM_EPOCH")) : 0), m_needSnapshot(false), m_mySlot(-1), m_resumePending(false), m_resumeTarget(0), m_testDone(false), m_dropLog(0), m_aiNextJoin(0), m_nextDamage(0), m_startTick(GetTickCount()), m_supplyBucket(0xffffffffu) { const char *d = getenv("UM_WORLD_DIR"); if (d) { m_dir = d; CreateDirectoryA(m_dir.c_str(), NULL); } }
+		m_lastFrame(0xffffffff), m_nextTick(0), m_tickFrac(0), m_nextConnId(1), m_mismatches(0), m_crcChecked(0), m_gotWorld(false), m_localDropped(0), m_uncapped(getenv("UM_UNCAPPED") != NULL), m_epochFrame(0), m_epochRaw(0), m_epochInterval(getenv("UM_EPOCH") ? (unsigned)atoi(getenv("UM_EPOCH")) : 0), m_needSnapshot(false), m_mySlot(-1), m_resumePending(false), m_resumeTarget(0), m_testDone(false), m_dropLog(0), m_aiNextJoin(0), m_nextDamage(0), m_startTick(GetTickCount()), m_supplyBucket(0xffffffffu) { const char *d = getenv("UM_WORLD_DIR"); if (d) { m_dir = d; CreateDirectoryA(m_dir.c_str(), NULL); } }
 
 	// --- lifecycle
 	virtual void init(void) {}
@@ -280,6 +285,16 @@ public:
 		if (f == m_lastFrame) return;
 		m_lastFrame = f;
 		if (f % 1500 == 0) status();
+		if (const char *dd = getenv("UM_OBJDEEP"))   // debugging aid: "from,to,TemplateSubstring": every xfer'd value of the matching objects, one file per object and frame (objdeep_<role>_<frame>_<id>.bin)
+		{
+			unsigned lo = 0, hi = 0; char sub[64] = ""; sscanf(dd, "%u,%u,%63s", &lo, &hi, sub);
+			if (f >= lo && f <= hi) for (Object *o = TheGameLogic->getFirstObject(); o; o = o->getNextObject()) if (strstr(o->getTemplate()->getName().str(), sub)) { char fn[96]; sprintf(fn, "objdeep_%s_%u_%u.bin", m_role == UM_ROLE_SERVER ? "server" : "client", f, (unsigned)o->getID()); XferDeepCRC dx; dx.open(AsciiString(fn)); dx.xferSnapshot(o); dx.close(); }
+		}
+		if (const char *od = getenv("UM_OBJDUMP"))   // debugging aid: "from,to" writes the object list text (id, template, owner, position) for every frame in the range
+		{
+			unsigned lo = 0, hi = 0; sscanf(od, "%u,%u", &lo, &hi);
+			if (f >= lo && f <= hi) { char tn[64]; sprintf(tn, "deepobjs_%s_%u.txt", m_role == UM_ROLE_SERVER ? "server" : "client", f); if (FILE *tf = fopen(tn, "w")) { for (Object *o = TheGameLogic->getFirstObject(); o; o = o->getNextObject()) { const Coord3D *pp = o->getPosition(); XferCRC oc; oc.open("o"); oc.xferSnapshot(o); oc.close(); fprintf(tf, "%u %s p%d %.4f %.4f %.4f crc %08x\n", (unsigned)o->getID(), o->getTemplate()->getName().str(), o->getControllingPlayer() ? o->getControllingPlayer()->getPlayerIndex() : -1, pp->x, pp->y, pp->z, (unsigned)oc.getCRC()); } fclose(tf); } }
+		}
 		if (const char *df = getenv("UM_DEEPCRC_FRAME"))   // debugging aid: dump every xfer'd value at a frame, diff server vs replica
 			if ((unsigned)atoi(df) == f) { char nm[64]; sprintf(nm, "deepcrc_%s_%u.bin", m_role == UM_ROLE_SERVER ? "server" : "client", f); TheGameLogic->getCRC(CRC_RECALC, AsciiString(nm)); printf("[um] deep CRC written to %s\n", nm); char tn[64]; sprintf(tn, "deepobjs_%s_%u.txt", m_role == UM_ROLE_SERVER ? "server" : "client", f); if (FILE *tf = fopen(tn, "w")) { for (Object *o = TheGameLogic->getFirstObject(); o; o = o->getNextObject()) { const Coord3D *pp = o->getPosition(); fprintf(tf, "%u %s p%d %.3f %.3f %.3f\n", (unsigned)o->getID(), o->getTemplate()->getName().str(), o->getControllingPlayer() ? o->getControllingPlayer()->getPlayerIndex() : -1, pp->x, pp->y, pp->z); } fclose(tf); } }
 		if (m_role == UM_ROLE_SERVER)
@@ -321,7 +336,7 @@ public:
 
 private:
 	DWORD m_startTick; unsigned m_supplyBucket;
-	UmRole m_role; SOCKET m_listen, m_sock; Bool m_ready; bool m_started; unsigned m_limit; unsigned m_lastFrame; DWORD m_nextTick;
+	UmRole m_role; SOCKET m_listen, m_sock; Bool m_ready; bool m_started; unsigned m_limit; unsigned m_lastFrame; DWORD m_nextTick; unsigned m_tickFrac;
 	std::vector<UmConn> m_conns; int m_nextConnId; UmWorldDesc m_world; std::map<unsigned, std::string> m_log; std::map<unsigned, std::string> m_inbox;
 	std::map<unsigned, UnsignedInt> m_crcHist; std::string m_pending; unsigned m_pendingCount; int m_mismatches, m_crcChecked; bool m_gotWorld, m_uncapped;
 	std::string m_recv;
@@ -331,6 +346,7 @@ private:
 	int m_mySlot;
 public:
 	int mySlot() const { return m_mySlot; }
+	bool catchUp(unsigned *frame, unsigned *live) const { if (m_role != UM_ROLE_CLIENT || !TheGameLogic || !TheGameLogic->isInGame()) return false; *frame = TheGameLogic->getFrame(); *live = m_limit; return m_limit > *frame + 150; }
 private:
 	std::string m_dir; bool m_resumePending; unsigned m_resumeTarget; std::map<unsigned, std::string> m_replay;   // server persistence: world dir, restart state
 
@@ -400,7 +416,7 @@ private:
 		if (m_dir.empty()) return;
 		CreateDirectoryA(m_dir.c_str(), NULL);
 		atomicWrite("epoch.sav", raw);
-		Wr w; putWorld(w, m_worldEpoch); w.u32(f); atomicWrite("world.bin", w.b);
+		Wr w; w.u32(UM_WORLD_FILE_MAGIC); w.u32((unsigned)MAX_PLAYER_COUNT); putWorld(w, m_worldEpoch); w.u32(f); atomicWrite("world.bin", w.b);
 		atomicWrite("cmds.log", std::string());
 		atomicWrite("frame.txt", std::string());
 	}
@@ -440,7 +456,15 @@ private:
 		if (m_dir.empty()) return false;
 		std::string wb, raw, mark, log;
 		if (!umReadFile(pathOf("world.bin"), wb) || !umReadFile(pathOf("epoch.sav"), raw)) return false;
-		Rd r(wb.data(), wb.size()); if (!getWorld(r, m_world)) return false; m_worldEpoch = m_world;
+		Rd r(wb.data(), wb.size()); bool tagged = wb.size() >= 4 && memcmp(wb.data(), &UM_WORLD_FILE_MAGIC, 4) == 0; unsigned cap = 0;
+		if (tagged) { r.u32(); cap = r.u32(); }
+		if (!tagged || cap != (unsigned)MAX_PLAYER_COUNT)
+		{	// snapshots hold per-player arrays sized by the build's player cap: a world saved by a build with another cap cannot be loaded
+			printf("[um] server: the saved world was made by a build with a different player cap (%u, this one %u); starting a new world\n", cap, (unsigned)MAX_PLAYER_COUNT);
+			static const char *old[] = { "world.bin", "epoch.sav", "cmds.log", "players.txt", "frame.txt" }; for (int i = 0; i < 5; ++i) DeleteFileA(pathOf(old[i]).c_str());
+			return false;
+		}
+		if (!getWorld(r, m_world, tagged)) return false; m_worldEpoch = m_world;
 		unsigned ef = r.u32(); umReadFile(pathOf("frame.txt"), mark); umReadFile(pathOf("cmds.log"), log);
 		m_epochFrame = ef; m_epochRaw = (unsigned)raw.size(); m_epochZ = umZip(raw);
 		m_resumeTarget = mark.empty() ? ef : (unsigned)atoi(mark.c_str());
@@ -705,10 +729,11 @@ private:
 		}
 		if (!TheGameLogic || !TheGameLogic->isInGame()) { m_ready = TRUE; return; }   // let the engine process MSG_NEW_GAME
 		// pace (a restarted server re-simulates up to where it died as fast as it can)
+		if (TheGameEngine && TheGameEngine->getFramesPerSecondLimit() != m_world.speed) TheGameEngine->setFramesPerSecondLimit(m_world.speed);
 		DWORD now = timeGetTime();
 		bool catching = TheGameLogic->getFrame() < m_resumeTarget;
 		if (!m_uncapped && !catching && now < m_nextTick) return;
-		m_nextTick = (now > m_nextTick + 200 || m_nextTick == 0) ? now + 33 : m_nextTick + 33;
+		{ int spd = m_world.speed < 15 ? 15 : (m_world.speed > 60 ? 60 : m_world.speed); m_tickFrac += 1000 % spd; DWORD step = 1000 / spd + (m_tickFrac >= (unsigned)spd ? 1 : 0); if (m_tickFrac >= (unsigned)spd) m_tickFrac -= spd; m_nextTick = (now > m_nextTick + 200 || m_nextTick == 0) ? now + step : m_nextTick + step; }   // game speed = logic frames per second (15..60, default 30)
 		unsigned f = TheGameLogic->getFrame();
 		if (!m_replay.empty())
 		{
@@ -810,6 +835,7 @@ private:
 		unsigned f = TheGameLogic->getFrame();
 		// catch-up runs unthrottled; near the live edge fall back to the normal limiter
 		TheWritableGlobalData->m_useFpsLimit = (m_limit - f) < 60 && !m_uncapped;
+		if (TheGameEngine && TheGameEngine->getFramesPerSecondLimit() != m_world.speed) TheGameEngine->setFramesPerSecondLimit(m_world.speed);   // the server owns the game speed
 		if (f < m_limit)
 		{
 			std::map<unsigned, std::string>::iterator it = m_inbox.find(f);
@@ -853,6 +879,7 @@ void UmNetStartClient(const char *host, int port)
 	TheUmNet = new UmNet(UM_ROLE_CLIENT); TheNetwork = TheUmNet; TheUmNet->startClient(host, port);
 }
 void UmNetPostUpdate() { if (TheUmNet) TheUmNet->postUpdate(); }
+bool UmNetCatchUp(unsigned *frame, unsigned *live) { return TheUmNet && TheUmNet->catchUp(frame, live); }
 int UmNetMySlot() { return TheUmNet ? TheUmNet->mySlot() : -1; }
 
 void UmNoteCombatImpl(Int a, Int b) { if (TheUmNet) TheUmNet->noteCombat(a, b); }

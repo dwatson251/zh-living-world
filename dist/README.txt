@@ -45,6 +45,12 @@ Hosting a world
    and forward those TCP ports on your router to this PC. Give players your public address and the port.
 3. No window? Run  zh_host.exe --cli --port 7777 --max-players 16 --max-ai 16 --start-cash 10000 --rent-minutes 15 ...  (zh_host.exe --help lists every option).
    Every option is also a line in um_server.ini; command-line options win.
+Seats and AI: the world holds up to 128 players in total (human seats + AI), plus the server's observer. Set "Max players (seats)", "Max AI players", "AI seats (pool)" and "AI players at world start"; their sum plus 1 must not
+be more than 129. A saved world keeps the seat counts it was started with: to change them, stop the server, delete the "world" folder (this ends the current world) and start again.
+Game speed (15-60, default 30) sets how fast the game runs for everybody, like the speed slider in a skirmish.
+Very large map: set Map to  Maps\Living World Grand\Living World Grand.map  and start. On first use the server builds this 8000 x 8000 unit map with 128 start spots from your own Tournament Desert (nothing is downloaded
+or shipped) and saves it to the Maps folder of your Zero Hour data folder in Documents; players do not need the file, the world snapshot carries it. The default map is Tournament Desert with invented start spots.
+Joining a world that has been running for a while replays it from the last save, which can take a few minutes with many AI players; the game shows how far it has got.
 The host restarts the server from its saved world if it stops. The world lives in the "world" folder next to the program: back it up to keep a world.
 A status page runs at http://localhost:8080/ (players, seats, uptime).
 

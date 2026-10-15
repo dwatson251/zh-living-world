@@ -632,7 +632,7 @@ diff -ruN a/GameEngine/Include/Common/SpecialPowerType.h b/GameEngine/Include/Co
  	// don't forget to add new strings to SpecialPowerMaskType::s_bitNameList[]
 diff -ruN a/GameEngine/Include/Common/Team.h b/GameEngine/Include/Common/Team.h
 --- a/GameEngine/Include/Common/Team.h	2026-10-13 16:49:44.961304129 +0100
-+++ b/GameEngine/Include/Common/Team.h	2026-10-13 19:08:40.332158143 +0100
++++ b/GameEngine/Include/Common/Team.h	2026-10-15 03:31:01.163793927 +0100
 @@ -110,7 +110,7 @@
  class Waypoint;
  class PlayerRelationMap;
@@ -919,6 +919,17 @@ diff -ruN a/GameEngine/Include/GameClient/InGameUI.h b/GameEngine/Include/GameCl
  {
  	RADIUSCURSOR_NONE = 0,
  	RADIUSCURSOR_ATTACK_DAMAGE_AREA,
+diff -ruN a/GameEngine/Include/GameClient/MapUtil.h b/GameEngine/Include/GameClient/MapUtil.h
+--- a/GameEngine/Include/GameClient/MapUtil.h	2026-10-13 16:49:44.969304221 +0100
++++ b/GameEngine/Include/GameClient/MapUtil.h	2026-10-15 00:36:16.409787616 +0100
+@@ -103,6 +103,7 @@
+ 	AsciiString getMapExtension() const;
+ 
+ 	const MapMetaData *findMap(AsciiString mapName);
++	AsciiString umResolveName(AsciiString mapName);	///< Living World: "Maps\\Name\\Name.map" of a user map -> the full path it is cached under (other names unchanged)
+ 
+ 	// allow us to create a set of shippable maps to be in mapcache.ini.  For use with -buildMapCache.
+ 	void addShippingMap(AsciiString mapName) { mapName.toLower(); m_allowedMaps.insert(mapName); }
 diff -ruN a/GameEngine/Include/GameClient/ParticleSys.h b/GameEngine/Include/GameClient/ParticleSys.h
 --- a/GameEngine/Include/GameClient/ParticleSys.h	2026-10-13 16:49:44.969304221 +0100
 +++ b/GameEngine/Include/GameClient/ParticleSys.h	2026-10-13 19:08:40.450878210 +0100
@@ -1675,7 +1686,7 @@ diff -ruN a/GameEngine/Include/GameLogic/ScriptActions.h b/GameEngine/Include/Ga
  // ScriptActionsInterface
 diff -ruN a/GameEngine/Include/GameLogic/ScriptEngine.h b/GameEngine/Include/GameLogic/ScriptEngine.h
 --- a/GameEngine/Include/GameLogic/ScriptEngine.h	2026-10-13 16:49:44.989304462 +0100
-+++ b/GameEngine/Include/GameLogic/ScriptEngine.h	2026-10-13 19:15:27.386544129 +0100
++++ b/GameEngine/Include/GameLogic/ScriptEngine.h	2026-10-15 03:24:12.037315528 +0100
 @@ -127,7 +127,7 @@
  	MEMORY_POOL_GLUE_WITH_USERLOOKUP_CREATE(AttackPriorityInfo, "AttackPriorityInfo")		
  
@@ -1685,6 +1696,41 @@ diff -ruN a/GameEngine/Include/GameLogic/ScriptEngine.h b/GameEngine/Include/Gam
  
  public:
  
+@@ -221,7 +221,11 @@
+ {
+ 
+ public:
++#ifdef UM_LW
++	enum {MAX_COUNTERS=4096, MAX_FLAGS=4096, MAX_ATTACK_PRIORITIES=1024};	// Living World: every AI player has its own qualified counters, flags and attack priority sets (the stock 256 fill up with ~30 AI players)
++#else
+ 	enum {MAX_COUNTERS=256, MAX_FLAGS=256, MAX_ATTACK_PRIORITIES=256};
++#endif
+ 	enum TFade {FADE_NONE, FADE_SUBTRACT, FADE_ADD, FADE_SATURATE, FADE_MULTIPLY};
+ 	ScriptEngine();
+ 	virtual ~ScriptEngine();
+diff -ruN a/GameEngine/Include/GameLogic/SidesList.h b/GameEngine/Include/GameLogic/SidesList.h
+--- a/GameEngine/Include/GameLogic/SidesList.h	2026-10-13 16:49:44.989304462 +0100
++++ b/GameEngine/Include/GameLogic/SidesList.h	2026-10-15 00:14:04.691126711 +0100
+@@ -28,6 +28,8 @@
+ // Author: John Ahlquist, November 2001
+ 
+ #pragma once
++#include <map>
++#include <string>
+ 
+ #ifndef SIDESLIST_H
+ #define SIDESLIST_H
+@@ -99,6 +101,10 @@
+ 	Int					m_numTeams;
+ 	Int					m_numTeamsAllocated;
+ 	TeamsInfo*	m_teams;
++#ifdef UM_LW
++	std::map<std::string, Int> m_umNameIdx;	///< team name -> index, built lazily: with 100+ players the linear search made world loads take tens of seconds
++	Int					m_umIdxCount;
++#endif
+ 
+ public:
+ 	TeamsInfoRec();
 diff -ruN a/GameEngine/Include/GameLogic/TerrainLogic.h b/GameEngine/Include/GameLogic/TerrainLogic.h
 --- a/GameEngine/Include/GameLogic/TerrainLogic.h	2026-10-13 16:49:44.989304462 +0100
 +++ b/GameEngine/Include/GameLogic/TerrainLogic.h	2026-10-13 19:08:38.472208622 +0100
@@ -2172,6 +2218,138 @@ diff -ruN a/GameEngine/Source/Common/INI/INI.cpp b/GameEngine/Source/Common/INI/
  		throw INI_INVALID_NAME_LIST;
  	}
  
+diff -ruN a/GameEngine/Source/Common/INI/INIMapCache.cpp b/GameEngine/Source/Common/INI/INIMapCache.cpp
+--- a/GameEngine/Source/Common/INI/INIMapCache.cpp	2026-10-13 16:49:45.001304604 +0100
++++ b/GameEngine/Source/Common/INI/INIMapCache.cpp	2026-10-15 01:00:39.518345803 +0100
+@@ -112,6 +112,128 @@
+ 	{ "Player_6_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 5 },
+ 	{ "Player_7_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 6 },
+ 	{ "Player_8_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 7 },
++#ifdef UM_LW
++	{ "Player_9_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 8 },
++	{ "Player_10_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 9 },
++	{ "Player_11_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 10 },
++	{ "Player_12_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 11 },
++	{ "Player_13_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 12 },
++	{ "Player_14_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 13 },
++	{ "Player_15_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 14 },
++	{ "Player_16_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 15 },
++	{ "Player_17_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 16 },
++	{ "Player_18_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 17 },
++	{ "Player_19_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 18 },
++	{ "Player_20_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 19 },
++	{ "Player_21_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 20 },
++	{ "Player_22_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 21 },
++	{ "Player_23_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 22 },
++	{ "Player_24_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 23 },
++	{ "Player_25_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 24 },
++	{ "Player_26_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 25 },
++	{ "Player_27_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 26 },
++	{ "Player_28_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 27 },
++	{ "Player_29_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 28 },
++	{ "Player_30_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 29 },
++	{ "Player_31_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 30 },
++	{ "Player_32_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 31 },
++	{ "Player_33_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 32 },
++	{ "Player_34_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 33 },
++	{ "Player_35_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 34 },
++	{ "Player_36_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 35 },
++	{ "Player_37_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 36 },
++	{ "Player_38_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 37 },
++	{ "Player_39_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 38 },
++	{ "Player_40_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 39 },
++	{ "Player_41_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 40 },
++	{ "Player_42_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 41 },
++	{ "Player_43_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 42 },
++	{ "Player_44_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 43 },
++	{ "Player_45_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 44 },
++	{ "Player_46_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 45 },
++	{ "Player_47_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 46 },
++	{ "Player_48_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 47 },
++	{ "Player_49_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 48 },
++	{ "Player_50_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 49 },
++	{ "Player_51_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 50 },
++	{ "Player_52_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 51 },
++	{ "Player_53_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 52 },
++	{ "Player_54_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 53 },
++	{ "Player_55_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 54 },
++	{ "Player_56_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 55 },
++	{ "Player_57_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 56 },
++	{ "Player_58_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 57 },
++	{ "Player_59_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 58 },
++	{ "Player_60_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 59 },
++	{ "Player_61_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 60 },
++	{ "Player_62_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 61 },
++	{ "Player_63_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 62 },
++	{ "Player_64_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 63 },
++	{ "Player_65_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 64 },
++	{ "Player_66_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 65 },
++	{ "Player_67_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 66 },
++	{ "Player_68_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 67 },
++	{ "Player_69_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 68 },
++	{ "Player_70_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 69 },
++	{ "Player_71_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 70 },
++	{ "Player_72_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 71 },
++	{ "Player_73_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 72 },
++	{ "Player_74_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 73 },
++	{ "Player_75_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 74 },
++	{ "Player_76_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 75 },
++	{ "Player_77_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 76 },
++	{ "Player_78_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 77 },
++	{ "Player_79_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 78 },
++	{ "Player_80_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 79 },
++	{ "Player_81_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 80 },
++	{ "Player_82_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 81 },
++	{ "Player_83_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 82 },
++	{ "Player_84_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 83 },
++	{ "Player_85_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 84 },
++	{ "Player_86_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 85 },
++	{ "Player_87_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 86 },
++	{ "Player_88_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 87 },
++	{ "Player_89_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 88 },
++	{ "Player_90_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 89 },
++	{ "Player_91_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 90 },
++	{ "Player_92_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 91 },
++	{ "Player_93_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 92 },
++	{ "Player_94_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 93 },
++	{ "Player_95_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 94 },
++	{ "Player_96_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 95 },
++	{ "Player_97_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 96 },
++	{ "Player_98_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 97 },
++	{ "Player_99_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 98 },
++	{ "Player_100_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 99 },
++	{ "Player_101_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 100 },
++	{ "Player_102_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 101 },
++	{ "Player_103_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 102 },
++	{ "Player_104_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 103 },
++	{ "Player_105_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 104 },
++	{ "Player_106_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 105 },
++	{ "Player_107_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 106 },
++	{ "Player_108_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 107 },
++	{ "Player_109_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 108 },
++	{ "Player_110_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 109 },
++	{ "Player_111_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 110 },
++	{ "Player_112_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 111 },
++	{ "Player_113_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 112 },
++	{ "Player_114_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 113 },
++	{ "Player_115_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 114 },
++	{ "Player_116_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 115 },
++	{ "Player_117_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 116 },
++	{ "Player_118_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 117 },
++	{ "Player_119_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 118 },
++	{ "Player_120_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 119 },
++	{ "Player_121_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 120 },
++	{ "Player_122_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 121 },
++	{ "Player_123_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 122 },
++	{ "Player_124_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 123 },
++	{ "Player_125_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 124 },
++	{ "Player_126_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 125 },
++	{ "Player_127_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 126 },
++	{ "Player_128_Start",					INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_waypoints ) + sizeof(Coord3D) * 127 },
++#endif
+ 
+ 	{ "InitialCameraPosition",	INI::parseCoord3D,	NULL,	offsetof( MapMetaDataReader, m_initialCameraPosition ) },
+ 
 diff -ruN a/GameEngine/Source/Common/INI/INIWater.cpp b/GameEngine/Source/Common/INI/INIWater.cpp
 --- a/GameEngine/Source/Common/INI/INIWater.cpp	2026-10-13 16:49:45.001304604 +0100
 +++ b/GameEngine/Source/Common/INI/INIWater.cpp	2026-10-14 10:32:25.991221873 +0100
@@ -2232,6 +2410,67 @@ diff -ruN a/GameEngine/Source/Common/MultiplayerSettings.cpp b/GameEngine/Source
 +		c->setNightColor(rgb);
 +	}
 +}
+diff -ruN a/GameEngine/Source/Common/NameKeyGenerator.cpp b/GameEngine/Source/Common/NameKeyGenerator.cpp
+--- a/GameEngine/Source/Common/NameKeyGenerator.cpp	2026-10-13 16:49:45.001304604 +0100
++++ b/GameEngine/Source/Common/NameKeyGenerator.cpp	2026-10-15 00:18:27.054799289 +0100
+@@ -31,6 +31,11 @@
+ #include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
+ 
+ // Public Data ////////////////////////////////////////////////////////////////////////////////////
++
++#ifdef UM_LW
++#include <vector>
++static std::vector<void *> sUmBucketById;	///< key -> Bucket*, so keyToName is not a scan over 45007 sockets (it dominated loading 100+ player worlds)
++#endif
+ NameKeyGenerator *TheNameKeyGenerator = NULL;  ///< name key gen. singleton
+ 
+ //------------------------------------------------------------------------------------------------- 
+@@ -75,6 +80,9 @@
+ //------------------------------------------------------------------------------------------------- 
+ void NameKeyGenerator::freeSockets()
+ {
++#ifdef UM_LW
++	sUmBucketById.clear();
++#endif
+ 	for (Int i = 0; i < SOCKET_COUNT; ++i)
+ 	{
+ 		Bucket *next;
+@@ -111,6 +119,13 @@
+ //------------------------------------------------------------------------------------------------- 
+ AsciiString NameKeyGenerator::keyToName(NameKeyType key)
+ {
++#ifdef UM_LW
++	if ((UnsignedInt)key < sUmBucketById.size() && sUmBucketById[(UnsignedInt)key])
++	{
++		Bucket *ub = (Bucket *)sUmBucketById[(UnsignedInt)key];
++		if (ub->m_key == key) return ub->m_nameString;
++	}
++#endif
+ 	for (Int i = 0; i < SOCKET_COUNT; ++i)
+ 	{
+ 		for (Bucket *b = m_sockets[i]; b; b = b->m_nextInSocket)
+@@ -139,6 +154,10 @@
+ 	// nope, guess not. let's allocate it.
+ 	b = newInstance(Bucket);
+ 	b->m_key = (NameKeyType)m_nextID++;
++#ifdef UM_LW
++	if (sUmBucketById.size() <= (UnsignedInt)b->m_key) sUmBucketById.resize((UnsignedInt)b->m_key + 1024, NULL);
++	sUmBucketById[(UnsignedInt)b->m_key] = b;
++#endif
+ 	b->m_nameString = nameString;
+ 	b->m_nextInSocket = m_sockets[hash];
+ 	m_sockets[hash] = b;
+@@ -187,6 +206,10 @@
+ 	// nope, guess not. let's allocate it.
+ 	b = newInstance(Bucket);
+ 	b->m_key = (NameKeyType)m_nextID++;
++#ifdef UM_LW
++	if (sUmBucketById.size() <= (UnsignedInt)b->m_key) sUmBucketById.resize((UnsignedInt)b->m_key + 1024, NULL);
++	sUmBucketById[(UnsignedInt)b->m_key] = b;
++#endif
+ 	b->m_nameString = nameString;
+ 	b->m_nextInSocket = m_sockets[hash];
+ 	m_sockets[hash] = b;
 diff -ruN a/GameEngine/Source/Common/RTS/Player.cpp b/GameEngine/Source/Common/RTS/Player.cpp
 --- a/GameEngine/Source/Common/RTS/Player.cpp	2026-10-13 16:49:45.005304649 +0100
 +++ b/GameEngine/Source/Common/RTS/Player.cpp	2026-10-14 09:41:38.459561965 +0100
@@ -2356,7 +2595,7 @@ diff -ruN a/GameEngine/Source/Common/RTS/SpecialPower.cpp b/GameEngine/Source/Co
  
 diff -ruN a/GameEngine/Source/Common/RandomValue.cpp b/GameEngine/Source/Common/RandomValue.cpp
 --- a/GameEngine/Source/Common/RandomValue.cpp	2026-10-13 16:49:45.005304649 +0100
-+++ b/GameEngine/Source/Common/RandomValue.cpp	2026-10-13 23:37:24.168110859 +0100
++++ b/GameEngine/Source/Common/RandomValue.cpp	2026-10-15 02:36:54.303040483 +0100
 @@ -146,6 +146,18 @@
  	return theGameLogicBaseSeed;
  }
@@ -2376,6 +2615,47 @@ diff -ruN a/GameEngine/Source/Common/RandomValue.cpp b/GameEngine/Source/Common/
  UnsignedInt GetGameLogicRandomSeedCRC( void )
  {
  	CRC c;
+@@ -200,6 +212,20 @@
+ //
+ // Integer random value
+ //
++
++#ifdef UM_LW
++#include "GameLogic/GameLogic.h"
++// debugging aid (UM_RNGTRACE="from,to"): record every logic random draw (frame, value, call site) so two processes can be compared draw by draw
++static void umRngTrace(const char *kind, double v, const char *file, int line)
++{
++	static int state = 0; static unsigned lo = 0, hi = 0; static FILE *fp = NULL;
++	if (state == 0) { const char *e = getenv("UM_RNGTRACE"); state = e ? 1 : 2; if (e) { sscanf(e, "%u,%u", &lo, &hi); char fn[64]; sprintf(fn, "rng_%s.txt", getenv("UM_SERVER") ? "server" : "client"); fp = fopen(fn, "w"); } }
++	if (state != 1 || !fp || !TheGameLogic) return;
++	unsigned f = TheGameLogic->getFrame(); if (f < lo || f > hi) return;
++	const char *base = strrchr(file, '\\'); base = base ? base + 1 : file;
++	fprintf(fp, "%u %s %.6g %s:%d\n", f, kind, v, base, line);
++}
++#endif
+ Int GetGameLogicRandomValue( int lo, int hi, char *file, int line )
+ {
+ 	//Int delta = hi - lo + 1;
+@@ -218,6 +244,9 @@
+ 		return hi;
+ 
+ 	rval = ((Int)(randomValue(theGameLogicSeed) % delta)) + lo;
++#ifdef UM_LW
++	umRngTrace("i", rval, file, line);
++#endif
+ 	//temp = randomValue(theGameLogicSeed);
+ 	//temp = temp % delta;
+ 
+@@ -291,6 +320,9 @@
+ 		return hi;
+ 
+ 	rval = ((Real)(randomValue(theGameLogicSeed)) * theMultFactor ) * delta + lo;
++#ifdef UM_LW
++	umRngTrace("r", rval, file, line);
++#endif
+ 
+ 	DEBUG_ASSERTCRASH( rval >= lo && rval <= hi, ("Bad random val"));
+ /**/
 diff -ruN a/GameEngine/Source/Common/Recorder.cpp b/GameEngine/Source/Common/Recorder.cpp
 --- a/GameEngine/Source/Common/Recorder.cpp	2026-10-13 16:49:45.005304649 +0100
 +++ b/GameEngine/Source/Common/Recorder.cpp	2026-10-14 09:33:57.336794187 +0100
@@ -2389,6 +2669,48 @@ diff -ruN a/GameEngine/Source/Common/Recorder.cpp b/GameEngine/Source/Common/Rec
  	DEBUG_ASSERTCRASH(m_file == NULL, ("Starting to record game while game is in progress."));
  
  	reset();
+diff -ruN a/GameEngine/Source/Common/System/Debug.cpp b/GameEngine/Source/Common/System/Debug.cpp
+--- a/GameEngine/Source/Common/System/Debug.cpp	2026-10-13 16:49:45.005304649 +0100
++++ b/GameEngine/Source/Common/System/Debug.cpp	2026-10-15 00:49:35.610189036 +0100
+@@ -43,7 +43,8 @@
+ // ----------------------------------------------------------------------------
+ 
+ // SYSTEM INCLUDES 
+-#include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
++#include "PreRTS.h"
++#include <map>	// This must go first in EVERY cpp file int the GameEngine
+ 
+ 
+ // USER INCLUDES 
+@@ -214,13 +215,28 @@
+ #ifdef DEBUG_LOGGING
+ static void doLogOutput(const char *buffer)
+ {
++#ifdef UM_LW
++	{	// Living World: scripted AI players repeat the same assert every frame (missing templates, sub-objects); keep the first few of each and drop the rest, the log writes were slowing whole frames
++		if (strncmp(buffer, "ASSERT:", 7) == 0)
++		{
++			static std::map<unsigned, int> seen; unsigned h = 5381; for (const char *c = buffer; *c && c < buffer + 90; ++c) h = h * 33 + (unsigned char)*c;
++			int n = ++seen[h]; if (n > 20) return; if (n == 20) { static char note[160]; sprintf(note, "(this assert repeats; further copies are not logged) %.80s\n", buffer); buffer = note; }
++		}
++	}
++#endif
+ 	// log message to file
+ 	if (theDebugFlags & DEBUG_FLAG_LOG_TO_FILE)
+ 	{
+ 		if (theLogFile)
+ 		{
+ 			fprintf(theLogFile, "%s", buffer);	// note, no \n (should be there already)
++#ifdef UM_LW
++			{	// flush about once a second instead of after every line: a world load writes tens of thousands of lines
++				static DWORD lastFlush = 0; DWORD t = GetTickCount(); if (t - lastFlush > 1000) { lastFlush = t; fflush(theLogFile); }
++			}
++#else
+ 			fflush(theLogFile);
++#endif
+ 		}
+ 	}
+ 
 diff -ruN a/GameEngine/Source/Common/System/DisabledTypes.cpp b/GameEngine/Source/Common/System/DisabledTypes.cpp
 --- a/GameEngine/Source/Common/System/DisabledTypes.cpp	2026-10-13 16:49:45.005304649 +0100
 +++ b/GameEngine/Source/Common/System/DisabledTypes.cpp	2026-10-13 19:14:56.631063743 +0100
@@ -3307,6 +3629,35 @@ diff -ruN a/GameEngine/Source/GameClient/Input/Keyboard.cpp b/GameEngine/Source/
  	if(state == 0)
  		return m_keyNames[key].stdKey;
  	else if(state == 1)
+diff -ruN a/GameEngine/Source/GameClient/MapUtil.cpp b/GameEngine/Source/GameClient/MapUtil.cpp
+--- a/GameEngine/Source/GameClient/MapUtil.cpp	2026-10-13 16:49:45.029304937 +0100
++++ b/GameEngine/Source/GameClient/MapUtil.cpp	2026-10-15 00:36:16.409787616 +0100
+@@ -1081,10 +1081,25 @@
+ }
+ 
+ 
++AsciiString MapCache::umResolveName(AsciiString mapName)
++{
++	AsciiString low = mapName; low.toLower();
++	if (find(low) != end() || mapName.getLength() < 3 || mapName.getCharAt(1) == ':') return mapName;
++	AsciiString full = TheGlobalData->getPath_UserData(); full.concat(low); full.toLower();
++	return find(full) != end() ? full : mapName;
++}
++
+ const MapMetaData *MapCache::findMap(AsciiString mapName)
+ {
+ 	mapName.toLower();
+ 	MapCache::iterator it = find(mapName);
++#ifdef UM_LW
++	if (it == end() && mapName.getLength() > 2 && mapName.getCharAt(1) != ':')
++	{	// a map of the user's own (Documents\...\Maps) is cached under its full path; accept the short "Maps\Name\Name.map" form too
++		AsciiString full = TheGlobalData->getPath_UserData(); full.concat(mapName); full.toLower();
++		it = find(full);
++	}
++#endif
+ 	if (it == end())
+ 		return NULL;
+ 	return &(it->second);
 diff -ruN a/GameEngine/Source/GameClient/MessageStream/MetaEvent.cpp b/GameEngine/Source/GameClient/MessageStream/MetaEvent.cpp
 --- a/GameEngine/Source/GameClient/MessageStream/MetaEvent.cpp	2026-10-13 16:49:45.029304937 +0100
 +++ b/GameEngine/Source/GameClient/MessageStream/MetaEvent.cpp	2026-10-13 19:14:04.438156908 +0100
@@ -3374,8 +3725,20 @@ diff -ruN a/GameEngine/Source/GameClient/Terrain/TerrainVisual.cpp b/GameEngine/
        {
 diff -ruN a/GameEngine/Source/GameLogic/AI/AIPathfind.cpp b/GameEngine/Source/GameLogic/AI/AIPathfind.cpp
 --- a/GameEngine/Source/GameLogic/AI/AIPathfind.cpp	2026-10-13 16:49:45.037305032 +0100
-+++ b/GameEngine/Source/GameLogic/AI/AIPathfind.cpp	2026-10-13 19:27:04.464076397 +0100
-@@ -1201,7 +1201,7 @@
++++ b/GameEngine/Source/GameLogic/AI/AIPathfind.cpp	2026-10-15 00:40:54.632900136 +0100
+@@ -1101,7 +1101,11 @@
+ //-----------------------------------------------------------------------------------
+ 
+ enum { PATHFIND_CELLS_PER_FRAME=5000}; // Number of cells we will search pathfinding per frame.
++#ifdef UM_LW
++enum {CELL_INFOS_TO_ALLOCATE = 400000};	// Living World: dozens of AI players path over very large open maps; the stock pool of 30000 ran out
++#else
+ enum {CELL_INFOS_TO_ALLOCATE = 30000};
++#endif
+ PathfindCellInfo *PathfindCellInfo::s_infoArray = NULL;
+ PathfindCellInfo *PathfindCellInfo::s_firstFree = NULL;						
+ /**
+@@ -1201,7 +1205,7 @@
  { 	
  	if (m_info) PathfindCellInfo::releaseACellInfo(m_info);
  	m_info = NULL;
@@ -3386,7 +3749,7 @@ diff -ruN a/GameEngine/Source/GameLogic/AI/AIPathfind.cpp b/GameEngine/Source/Ga
  		DEBUG_LOG( ("PathfindCell::~PathfindCell m_info Allocated."));
 diff -ruN a/GameEngine/Source/GameLogic/AI/AISkirmishPlayer.cpp b/GameEngine/Source/GameLogic/AI/AISkirmishPlayer.cpp
 --- a/GameEngine/Source/GameLogic/AI/AISkirmishPlayer.cpp	2026-10-13 16:49:45.037305032 +0100
-+++ b/GameEngine/Source/GameLogic/AI/AISkirmishPlayer.cpp	2026-10-14 01:22:27.785593736 +0100
++++ b/GameEngine/Source/GameLogic/AI/AISkirmishPlayer.cpp	2026-10-15 03:31:01.163793927 +0100
 @@ -194,11 +194,13 @@
  					info->setObjectTimestamp(0); // ready to build.
  				}
@@ -3448,6 +3811,65 @@ diff -ruN a/GameEngine/Source/GameLogic/Map/PolygonTrigger.cpp b/GameEngine/Sour
  		if (pTrig==pTrigger) break;
  		pPrev = pTrig;
  	}
+diff -ruN a/GameEngine/Source/GameLogic/Map/SidesList.cpp b/GameEngine/Source/GameLogic/Map/SidesList.cpp
+--- a/GameEngine/Source/GameLogic/Map/SidesList.cpp	2026-10-13 16:49:45.037305032 +0100
++++ b/GameEngine/Source/GameLogic/Map/SidesList.cpp	2026-10-15 00:16:49.494134080 +0100
+@@ -1068,11 +1068,17 @@
+ TeamsInfoRec::TeamsInfoRec() : 
+ 	m_numTeams(0), m_numTeamsAllocated(0), m_teams(NULL)
+ {
++#ifdef UM_LW
++	m_umIdxCount = -1;
++#endif
+ }
+ 
+ TeamsInfoRec::TeamsInfoRec(const TeamsInfoRec& thatref) : 
+ 	m_numTeams(0), m_numTeamsAllocated(0), m_teams(NULL)
+ {
++#ifdef UM_LW
++	m_umIdxCount = -1;
++#endif
+ 	*this = thatref;
+ }
+ 
+@@ -1098,6 +1104,9 @@
+ 
+ void TeamsInfoRec::clear() 
+ { 
++#ifdef UM_LW
++	m_umIdxCount = -1;
++#endif
+ 	Int i;
+ 
+ 	for (i = 0; i < m_numTeamsAllocated; i++) 
+@@ -1111,6 +1120,17 @@
+ 
+ TeamsInfo *TeamsInfoRec::findTeamInfo(AsciiString name, Int* index /*= NULL*/)
+ {
++#ifdef UM_LW
++	if (m_numTeams > 32)
++	{
++		if (m_umIdxCount < 0 || m_umIdxCount > m_numTeams) { m_umNameIdx.clear(); m_umIdxCount = 0; }
++		for (; m_umIdxCount < m_numTeams; ++m_umIdxCount) m_umNameIdx.insert(std::make_pair(std::string(m_teams[m_umIdxCount].getDict()->getAsciiString(TheKey_teamName).str()), m_umIdxCount));   // appended teams only; first match wins, as in the linear search
++		std::map<std::string, Int>::const_iterator it = m_umNameIdx.find(std::string(name.str()));
++		if (it == m_umNameIdx.end()) return NULL;
++		if (index) *index = it->second;
++		return &m_teams[it->second];
++	}
++#endif
+ 	for (int i = 0; i < m_numTeams; i++) 
+ 	{
+ 		if (m_teams[i].getDict()->getAsciiString(TheKey_teamName) == name)
+@@ -1155,6 +1175,9 @@
+ 
+ void TeamsInfoRec::removeTeam(Int i)
+ {
++#ifdef UM_LW
++	m_umIdxCount = -1;
++#endif
+ 	if (i < 0 || i >= m_numTeams || m_numTeams <= 1)
+ 		return;
+ 
 diff -ruN a/GameEngine/Source/GameLogic/Map/TerrainLogic.cpp b/GameEngine/Source/GameLogic/Map/TerrainLogic.cpp
 --- a/GameEngine/Source/GameLogic/Map/TerrainLogic.cpp	2026-10-13 16:49:45.037305032 +0100
 +++ b/GameEngine/Source/GameLogic/Map/TerrainLogic.cpp	2026-10-14 22:35:22.854602139 +0100
@@ -4449,7 +4871,7 @@ diff -ruN a/GameEngine/Source/GameLogic/ScriptEngine/ScriptConditions.cpp b/Game
  	return pPlayer;
 diff -ruN a/GameEngine/Source/GameLogic/ScriptEngine/ScriptEngine.cpp b/GameEngine/Source/GameLogic/ScriptEngine/ScriptEngine.cpp
 --- a/GameEngine/Source/GameLogic/ScriptEngine/ScriptEngine.cpp	2026-10-13 16:49:45.069305412 +0100
-+++ b/GameEngine/Source/GameLogic/ScriptEngine/ScriptEngine.cpp	2026-10-14 01:26:41.778047500 +0100
++++ b/GameEngine/Source/GameLogic/ScriptEngine/ScriptEngine.cpp	2026-10-15 03:31:01.167459165 +0100
 @@ -5578,6 +5578,7 @@
  	// Evaluate the scripts.
  	for (i=0; i<TheSidesList->getNumSides(); i++) {
@@ -4510,7 +4932,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/Damage.cpp b/GameEngine/Source/Ga
  	"CRUSH",					
 diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source/GameLogic/System/GameLogic.cpp
 --- a/GameEngine/Source/GameLogic/System/GameLogic.cpp	2026-10-13 16:49:45.069305412 +0100
-+++ b/GameEngine/Source/GameLogic/System/GameLogic.cpp	2026-10-14 22:25:23.017386978 +0100
++++ b/GameEngine/Source/GameLogic/System/GameLogic.cpp	2026-10-14 23:24:44.774287646 +0100
 @@ -83,6 +83,7 @@
  #include "GameLogic/CrateSystem.h"
  #include "GameLogic/FPUControl.h"
@@ -4529,7 +4951,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  	switch (m_gameMode) 
  	{
  	case GAME_SHELL:
-@@ -677,6 +681,111 @@
+@@ -677,6 +681,112 @@
  	}
  }
  
@@ -4575,6 +4997,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
 +	if (getenv("UM_TRACE_BIND")) { printf("[um] bind slot %d (player %d, %s) before newMap:", slotNum, player->getPlayerIndex(), player->getPlayerType() == PLAYER_COMPUTER ? "cpu" : "human"); for (Object *o = TheGameLogic->getFirstObject(); o; o = o->getNextObject()) if (o->getControllingPlayer() == player) printf(" %s", o->getTemplate()->getName().str()); printf("\n"); }
 +	player->newMap();   // an AI player analyses its base and build list when its map starts; a late joiner starts its 'map' now
 +	if (getenv("UM_TRACE_BIND")) { printf("[um] bind slot %d after newMap:", slotNum); for (Object *o = TheGameLogic->getFirstObject(); o; o = o->getNextObject()) if (o->getControllingPlayer() == player) printf(" %s", o->getTemplate()->getName().str()); printf("\n"); }
++	if (getenv("UM_TRACE_BIND")) printf("[um] bind slot %d: type %s skirmishAI %d scripts %p\n", (int)slotNum, player->getPlayerType() == PLAYER_COMPUTER ? "cpu" : "human", (int)player->isSkirmishAIPlayer(), (void *)TheSidesList->getSideInfo(player->getPlayerIndex())->getScriptList());
 +	if (cash > 0) player->getMoney()->deposit((UnsignedInt)cash, FALSE);
 +	DEBUG_LOG(("UmBindPlayer: slot %d bound at frame %u\n", slotNum, TheGameLogic->getFrame()));
 +}
@@ -4641,7 +5064,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  // ------------------------------------------------------------------------------------------------
  // ------------------------------------------------------------------------------------------------
  static void checkForDuplicateColors( GameInfo *game )
-@@ -774,7 +883,7 @@
+@@ -774,7 +884,7 @@
  			playerTemplateIdx = GameLogicRandomValue(0, ThePlayerTemplateStore->getPlayerTemplateCount()-1);
  #endif
  			const PlayerTemplate* pt = ThePlayerTemplateStore->getNthPlayerTemplate(playerTemplateIdx);
@@ -4650,7 +5073,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  			{
  #ifdef MORE_RANDOM
  				DEBUG_CRASH(("should not be possible"));
-@@ -792,10 +901,11 @@
+@@ -792,10 +902,11 @@
  		if (colorIdx < 0 || colorIdx >= TheMultiplayerSettings->getNumColors())
  		{
  			DEBUG_ASSERTCRASH(colorIdx == -1, ("Non-random bad color %d in slot %d\n", colorIdx, i));
@@ -4663,7 +5086,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  					colorIdx = -1;
  			}
  			DEBUG_LOG(("Setting color %d to %d\n", i, colorIdx));
-@@ -817,6 +927,10 @@
+@@ -817,6 +928,10 @@
    DEBUG_ASSERTCRASH( md , ("Could not find map %s in the mapcache", game->getMap().str()));
  	if (md)
  		numPlayers = md->m_numPlayers;
@@ -4674,7 +5097,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  
  	// generate a map of start spot distances
  	Real startSpotDistance[MAX_SLOTS][MAX_SLOTS];
-@@ -1178,7 +1292,7 @@
+@@ -1178,7 +1293,7 @@
  	GameInfo *game = NULL;
  	TheGameInfo = NULL;
  	Int localSlot = 0;
@@ -4683,7 +5106,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  	{
  		if (TheLAN)
  		{
-@@ -1993,6 +2107,9 @@
+@@ -1993,6 +2108,9 @@
  
  
  
@@ -4693,7 +5116,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  				placeNetworkBuildingsForPlayer(i, slot, player, pt);
  			}
  
-@@ -2092,7 +2209,12 @@
+@@ -2092,7 +2210,12 @@
  
  	// final step, run newMap for all players
  	if( loadingSaveGame == FALSE )
@@ -4706,7 +5129,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  
  	if ( isChallengeCampaign )
  	{
-@@ -3650,6 +3772,9 @@
+@@ -3650,6 +3773,9 @@
  	// would be getting the CRC anyway, so replays can get the CRCs from the exact instant in time as the original.
  	Bool isMPGameOrReplay = (TheRecorder && TheRecorder->isMultiplayer() && getGameMode() != GAME_SHELL && getGameMode() != GAME_NONE);
  	Bool isSoloGameOrReplay = (TheRecorder && !TheRecorder->isMultiplayer() && getGameMode() != GAME_SHELL && getGameMode() != GAME_NONE);
@@ -4716,7 +5139,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  	Bool generateForMP = (isMPGameOrReplay && (m_frame % TheGameInfo->getCRCInterval()) == 0);
  #if defined(_DEBUG) || defined(_INTERNAL)
  	Bool generateForSolo = isSoloGameOrReplay && ((m_frame && (m_frame%100 == 0)) ||
-@@ -4691,13 +4816,22 @@
+@@ -4691,13 +4817,22 @@
  {
    
  	// version
@@ -4740,7 +5163,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  	//
  	// note that we do not do the id counter here, we did it in the game state block because
  	// it's important to do that part very early in the load process
-@@ -4808,6 +4942,15 @@
+@@ -4808,6 +4943,15 @@
  
  		}  // end for, i
  
@@ -6376,7 +6799,7 @@ diff -ruN a/Libraries/Source/WWVegas/WW3D2/dx8renderer.cpp b/Libraries/Source/WW
  				DX8FVFCategoryContainer * container=list->Peek_Head();
 diff -ruN a/Libraries/Source/WWVegas/WW3D2/dx8wrapper.cpp b/Libraries/Source/WWVegas/WW3D2/dx8wrapper.cpp
 --- a/Libraries/Source/WWVegas/WW3D2/dx8wrapper.cpp	2026-10-13 16:49:45.137306221 +0100
-+++ b/Libraries/Source/WWVegas/WW3D2/dx8wrapper.cpp	2026-10-14 19:44:33.267403401 +0100
++++ b/Libraries/Source/WWVegas/WW3D2/dx8wrapper.cpp	2026-10-15 02:25:04.937399655 +0100
 @@ -294,12 +294,30 @@
  	Invalidate_Cached_Render_States();
  
@@ -6408,7 +6831,17 @@ diff -ruN a/Libraries/Source/WWVegas/WW3D2/dx8wrapper.cpp b/Libraries/Source/WWV
  
  		/*
  		** Create the D3D interface object
-@@ -576,6 +594,9 @@
+@@ -561,6 +579,9 @@
+ 
+ 	if (DX8Wrapper_PreserveFPU)
+ 		Vertex_Processing_Behavior |= D3DCREATE_FPU_PRESERVE;
++#ifdef UM_CLIENT
++	Vertex_Processing_Behavior |= D3DCREATE_FPU_PRESERVE;	// Living World: the game logic must run in the same floating point mode in the client as in the server (which has no real Direct3D)
++#endif
+ 
+ #ifdef CREATE_DX8_FPU_PRESERVE
+ 	Vertex_Processing_Behavior|=D3DCREATE_FPU_PRESERVE;
+@@ -576,6 +597,9 @@
  		&D3DDevice 
  	);
  
@@ -6418,7 +6851,7 @@ diff -ruN a/Libraries/Source/WWVegas/WW3D2/dx8wrapper.cpp b/Libraries/Source/WWV
  	if (FAILED(hr)) 
  	{
  		// The device selection may fail because the device lied that it supports 32 bit zbuffer with 16 bit
-@@ -803,7 +824,7 @@
+@@ -803,7 +827,7 @@
  bool DX8Wrapper::Set_Any_Render_Device(void)
  {
  	// Then fullscreen
@@ -6427,7 +6860,7 @@ diff -ruN a/Libraries/Source/WWVegas/WW3D2/dx8wrapper.cpp b/Libraries/Source/WWV
  		if (Set_Render_Device(dev_number,-1,-1,-1,0,false)) {
  			return true;
  		}
-@@ -916,7 +937,7 @@
+@@ -916,7 +940,7 @@
  	DX8Wrapper_IsWindowed = IsWindowed;
  
  	WWDEBUG_SAY(("Attempting Set_Render_Device: name: %s (%s:%s), width: %d, height: %d, windowed: %d\n",
@@ -6436,7 +6869,7 @@ diff -ruN a/Libraries/Source/WWVegas/WW3D2/dx8wrapper.cpp b/Libraries/Source/WWV
  		_RenderDeviceDescriptionTable[CurRenderDevice].Get_Driver_Version(),ResolutionWidth,ResolutionHeight,(IsWindowed ? 1 : 0)));
  
  #ifdef _WINDOWS
-@@ -1061,7 +1082,7 @@
+@@ -1061,7 +1085,7 @@
  	Get_Format_Name(DisplayFormat,&displayFormat);
  	Get_Format_Name(_PresentParameters.BackBufferFormat,&backbufferFormat);
  
@@ -6445,7 +6878,7 @@ diff -ruN a/Libraries/Source/WWVegas/WW3D2/dx8wrapper.cpp b/Libraries/Source/WWV
  	
  	bool ret;
  
-@@ -1458,7 +1479,7 @@
+@@ -1458,7 +1482,7 @@
  	bool found = false;
  	unsigned int mode = 0;
  
@@ -6454,7 +6887,13 @@ diff -ruN a/Libraries/Source/WWVegas/WW3D2/dx8wrapper.cpp b/Libraries/Source/WWV
  		found |= Find_Color_Mode(format_table[format_index],resx,resy,&mode);
  		if (found) break;
  	}
-@@ -1720,6 +1741,9 @@
+@@ -1717,9 +1741,15 @@
+ #endif
+ 			IsDeviceLost=false;
+ 			FrameCount++;
++#ifdef UM_CLIENT
++			if (getenv("UM_TRACE_DRAW") && FrameCount % 120 == 0) printf("[um] presented %u frames, tick %lu\n", (unsigned)FrameCount, (unsigned long)GetTickCount());
++#endif
  		}
  		else {
  			IsDeviceLost=true;
@@ -6464,7 +6903,7 @@ diff -ruN a/Libraries/Source/WWVegas/WW3D2/dx8wrapper.cpp b/Libraries/Source/WWV
  		}
  
  		// If the device was lost we need to check for cooperative level and possibly reset the device
-@@ -2244,11 +2268,11 @@
+@@ -2244,11 +2274,11 @@
  	}
  
  	unsigned mask=TEXTURE0_CHANGED;
@@ -6478,7 +6917,7 @@ diff -ruN a/Libraries/Source/WWVegas/WW3D2/dx8wrapper.cpp b/Libraries/Source/WWV
  
  			if (render_state.Textures[i]) 
  			{
-@@ -2489,7 +2513,7 @@
+@@ -2489,7 +2519,7 @@
  		else {
  			StringClass format_name(0,true);
  			Get_WW3D_Format_Name(format, format_name);
@@ -6487,7 +6926,7 @@ diff -ruN a/Libraries/Source/WWVegas/WW3D2/dx8wrapper.cpp b/Libraries/Source/WWV
  		}
  
  	}
-@@ -2788,7 +2812,7 @@
+@@ -2788,7 +2818,7 @@
  		{
  			StringClass format_name(0,true);
  			Get_WW3D_Format_Name(format, format_name);
@@ -6496,7 +6935,7 @@ diff -ruN a/Libraries/Source/WWVegas/WW3D2/dx8wrapper.cpp b/Libraries/Source/WWV
  		}
  
  	}
-@@ -2867,7 +2891,7 @@
+@@ -2867,7 +2897,7 @@
  		{
  			StringClass format_name(0,true);
  			Get_WW3D_Format_Name(format, format_name);
@@ -6505,7 +6944,7 @@ diff -ruN a/Libraries/Source/WWVegas/WW3D2/dx8wrapper.cpp b/Libraries/Source/WWV
  		}
  
  	}
-@@ -3085,7 +3109,7 @@
+@@ -3085,7 +3115,7 @@
  		}
  
  		D3DLIGHT8 light;		

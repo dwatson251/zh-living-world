@@ -13,8 +13,8 @@
 struct UmSlotDesc { int state; int tmpl; int color; int startPos; int team; std::string name; int profT; unsigned rgb; std::string nick; };   // profT: 0 = none, else the occupant's faction template index + 1
 struct UmWorldDesc
 {
-	std::string map; int seed; int synthStarts; std::vector<UmSlotDesc> slots;   // synthStarts: extra start waypoints (stress worlds)
-	UmWorldDesc() : seed(0), synthStarts(0) {}
+	std::string map; int seed; int synthStarts; int speed; std::vector<UmSlotDesc> slots;   // synthStarts: extra start waypoints (stress worlds)
+	UmWorldDesc() : seed(0), synthStarts(0), speed(30) {}
 };
 
 enum UmRole { UM_ROLE_NONE, UM_ROLE_SERVER, UM_ROLE_CLIENT };
@@ -30,4 +30,5 @@ void UmNetStartServer(int port, const UmWorldDesc &world);
 void UmNetStartClient(const char *host, int port);
 // Called by the headless engine after each GameEngine::update (CRC bookkeeping, frame advance broadcast, status).
 void UmNetPostUpdate();
+bool UmNetCatchUp(unsigned *frame, unsigned *live);   // client: true while still replaying towards the live frame (more than ~5 s behind)
 int UmNetMySlot();   // client: the seat the server gave us (-1: watching only)

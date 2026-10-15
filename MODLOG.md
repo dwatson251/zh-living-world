@@ -164,3 +164,43 @@ Terrain heights/LOS/cliff come from src/um/um_terrain.* (copied from BaseHeightM
 - With Defender out of the way the user still saw the retail main menu with dead buttons. Reproduced by starting the host and the client within seconds of each other at 1920x1080: the client joined
   ("now playing as a seat holder", frames advancing, 0 mismatches) while the engine's own main menu was still on screen. The retail path that hides the shell (`MSG_NEW_GAME` -> `prepareNewGame`) never runs for a joined world.
   Fast joins in earlier tests happened before the menu was pushed, so it never showed. Fix: `umClientTick` hides the shell as soon as the world is running. Verified by screenshot (base, control bar, $20000).
+
+## Game speed, catch-up message, diagnostics (post alpha.4)
+- `game_speed` (15-60, default 30; `--game-speed`, `UM_GAME_SPEED`) is a world setting: the server paces its logic at that rate and sends it to clients in the world description (UM_VERSION 3), the clients set their frame limiter from it. Measured 15/30/60 fps on the server; a client follows a speed-60 server in sync.
+- Persistence check with the real client: build a dozer (money 19000, 3 objects), kill the client, server logs "absent (slot 5 keeps its base)", rejoin with the same key: "returning player", slot 5, 19000 / 3 objects after the catch-up. Headless return_test and queue_test (knock-out -> queue -> fresh base) pass.
+- Real UI control verified with posted mouse messages (tools/winclick.ps1): select the command center, build button queues a Construction Dozer ($1000). Could not reproduce "AI controls my base"; the client now logs the local player (index, name, type, money, object count) every 3000 frames, and shows "Joining the world: catching up (n%)" while replaying.
+- lw_run.sh used to kill every zh_client.exe by name, which also killed the user's own playtest; it now kills only build\cl processes.
+
+## Linux / Docker round (2026-10-15, unattended)
+- Added: `LW_<SETTING>` environment overrides in `src/host/host.cpp` (between `um_server.ini` and command-line flags), `public/docker/{Dockerfile,entrypoint.sh,healthcheck.sh,README.md}`,
+  `public/docker-compose.yml`, a `docker-image` job in `public/.github/workflows/release.yml`, `docs/linux-native-findings.md`. Wine runs the unchanged Windows server programs; no game data in the image.
+- **Nothing was committed, tagged or pushed.** The lab tree has other uncommitted engine work being edited and rebuilt at the same time (see findings), and the large-world cross-platform check is unresolved.
+
+### Assumptions for review
+1. Linux = Wine-in-Docker now; native Linux server deferred (no 32-bit native fork exists; findings doc says why). You chose "native" earlier, I assumed the spike's own fallback rule applies.
+2. Game files: admin mounts their install at `/data/zerohour` (read-only); the entrypoint links it into a private run folder. Required files checked: INIZH, MapsZH, W3DZH, TerrainZH, EnglishZH `.big`.
+3. Image published to `ghcr.io/dwatson251/zh-living-world` (tags: version, and `latest` for non-pre-release tags only, so Portainer's default `latest` will not exist until a non-alpha tag; set `LW_TAG=0.0.1-alpha.N`). Package must be made public once in GitHub settings.
+4. Wine 11.19 wow64 build pinned by SHA-256; Debian bookworm-slim base; container runs as uid 1000.
+5. I did not tag `0.0.1-alpha.5`: unverified Docker image, unresolved large-world CRC divergence, and someone else was modifying the same tree/game folder during the run.
+6. Test side effects: my client wrote `um_winecheck_log.txt`, `um_ctl_*.txt` and `deep*_30.*` files into the Zero Hour folder (safe to delete); the Wine prefixes are `~/.wine-lw2`, Wine is at `~/tools/dl/wine`.
+
+## Seat cap 129, very large map, large-world desync fix (2026-10-15, unattended)
+- **Player cap:** `UM_MAX_PLAYERS=137` gives MAX_SLOTS 129 = the observer plus 128 players (humans + AI). Host validation allows 1 + start AI + seats + AI pool <= 129. Snapshots hold per-player arrays, so `world.bin` now carries the build's cap
+  and a saved world from a build with another cap is discarded with a log line (new world). `world.bin` also gained the game speed (tagged "UMW1"), UM_VERSION 3.
+- **"Every seat is taken" with no players:** the user's saved world was read with a changed `world.bin` layout (speed field added) and came out with 0 human seats. Fixed by the tag; now moot because of the cap check above.
+- **Load time of 100+ player worlds:** `NameKeyGenerator::keyToName` scanned all 45007 sockets per call and `TeamsInfoRec::findTeamInfo` was linear: save+reload of the epoch took 26 s at 119 slots, now 3.6 s (6.9 s at 129 slots). Also: the debug log
+  is flushed once a second instead of per line, and repeated identical asserts are logged 20 times (scripted AI repeats "Failed to find thing template Tech Center" every frame).
+- **MapCache.ini** only knew Player_1..8_Start: any map with more starts made the cache unparseable (a release crash on the next start). Table extended to 128. `MapCache::findMap` also accepts the short `Maps\Name\Name.map` form for maps in the user data folder.
+- **Pathfinder pool** raised from 30000 to 400000 cell infos ("Ran out of pathfind cells" on open maps with dozens of AI).
+- **"Living World Grand" map** (`src/client/mapgen.cpp`): 800 x 800 cells (8000 units, about 7300 playable), 128 start waypoints on a jittered grid with flattened bases, gentle hills, three texture classes, a supply dock and five piles by every start.
+  Built from the player's own Tournament Desert (texture list, lighting, world info, SidesList with the skirmish AI scripts are reused; heights, tiles, objects are new) the first time a server is asked for it, written to
+  `<Documents>\Command and Conquer Generals Zero Hour Data\Maps\Living World Grand\`. Nothing is shipped. Clients do not need the file: the server's snapshot embeds the map (checked with the map file hidden).
+  Python prototype in the session scratchpad (`gengrand.py`, RefPack decoder, chunk parser) validated the file format first; the format notes: DataChunk TOC + chunks (id u32, version u16, size i32); HeightMapData v4; BlendTileData v8
+  (tile index = ((first + (y/2 % w)*w + (x/2 % w)) << 2) | ((y&1)<<1 | (x&1)) for a texture class at `first` with `w` tiles per row; the tail after the per-cell arrays can be copied from any map); objects are chunks with a TOC-keyed dict.
+- **Desync with dozens of AI on that map (and in principle any big world): ScriptEngine counters/flags/attack priorities (256 each).** Every AI player has its own qualified counters; they ran out and AI decisions diverged between server and client
+  (a team production condition `Counter >= n` was true in one process and false in the other, then one RNG draw later everything differed). Found by: per-frame object CRCs -> first differing frame -> logic RNG call trace (UM_RNGTRACE) -> AI team selection ->
+  condition results. Raised to 4096/4096/1024 (`UM_LW`). Result: 129 slots, 40 AI, client in sync to frame 9000+ (epoch at 9000 included).
+- Debug aids added (all env-gated): UM_OBJDUMP (object list + per-object CRC per frame), UM_OBJDEEP (deep xfer of matching objects), UM_RNGTRACE, UM_SAMPLE (stack samples), UM_TRACE_DRAW, UM_TRACE_LOCAL. Tools: tools/lw_killall.sh, lw_pids.sh, winclick.ps1 (posted mouse/key messages), screengrab.ps1.
+- Screenshots were not possible while the desktop was locked (the user was away); everything above was verified from logs, CRC checks and file contents.
+- Harness lesson: a leftover server from an earlier run on the same port made later "tests" talk to old binaries. `tools/lw_killall.sh` before every run.
+- The Docker/Linux work (public/docker, docker-image CI job, LW_ env overrides, docs/linux-native-findings.md) came from another session working in this tree at the same time; its open question (large-world divergence) is the counter overflow above.

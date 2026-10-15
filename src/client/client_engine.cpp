@@ -73,6 +73,10 @@ static void umClientMessages()
 		if (now - gUmKickTick > 8000) { fflush(stdout); ExitProcess(0); }
 		return;
 	}
+	{	// joining a world that has run for a while means replaying it from the last saved snapshot: say so, it can take minutes
+		static DWORD lastCatch = 0; unsigned cf, cl;
+		if (UmNetCatchUp(&cf, &cl) && now - lastCatch > 3000) { lastCatch = now; wchar_t b[160]; swprintf(b, 160, L"Joining the world: catching up with the server (%u%%). This can take a few minutes.", (unsigned)(cl ? (unsigned long long)cf * 100 / cl : 0)); TheInGameUI->message(UnicodeString(b)); }
+	}
 	if (UmNetMySlot() < 0 && now - lastMsg > 6000) { lastMsg = now; TheInGameUI->message(UnicodeString(L"Watching the world: every seat is taken. You join as soon as one frees up.")); }
 }
 static void umClientTick()
@@ -90,6 +94,7 @@ static void umClientTick()
 	if (TheShell && TheShell->isShellActive()) { TheShell->hideShell(); printf("[um] client: retail main menu hidden\n"); }   // joined while the engine was still showing its main menu: the retail path (MSG_NEW_GAME) that would hide it never runs
 	if (TheMouse && !TheMouse->getVisibility()) { TheMouse->setVisibility(TRUE); TheMouse->setCursor(Mouse::ARROW); printf("[um] client: cursor made visible\n"); }   // the retail code only does this when a load screen shows
 	int slot = UmNetMySlot();
+	if ((getenv("UM_TRACE_LOCAL") ? TheGameLogic->getFrame() % 300 == 0 : TheGameLogic->getFrame() % 3000 == 0)) { static unsigned lastF = 0; if (lastF != TheGameLogic->getFrame()) { lastF = TheGameLogic->getFrame(); Player *lp = ThePlayerList->getLocalPlayer(); int n = 0, uc = 0; for (Object *o = TheGameLogic->getFirstObject(); o; o = o->getNextObject()) if (o->getControllingPlayer() == lp) { ++n; if (o->testStatus(OBJECT_STATUS_UNDER_CONSTRUCTION)) ++uc; } printf("[um] local player index %d '%ls' type %s money %u objects %d (under construction %d) slot %d\n", lp->getPlayerIndex(), lp->getPlayerDisplayName().str(), lp->getPlayerType() == PLAYER_COMPUTER ? "cpu" : "human", lp->getMoney()->countMoney(), n, uc, slot); } }
 	static int centeredFor = -2;
 	if (slot == applied && slot >= 0 && centeredFor != slot)
 	{	// the base arrives with the server's bind command, a few frames after the seat: look at it as soon as it exists
@@ -129,6 +134,7 @@ public:
 		GameEngine::init(argc, argv);
 		fprintf(stderr, "[um] client engine: base init done, UM_CLIENT=%s\n", getenv("UM_CLIENT") ? getenv("UM_CLIENT") : "(unset)");
 		TheMultiplayerSettings->extendColors(MAX_SLOTS + 1);   // every process must agree on the palette
+		{ extern bool UmEnsureGrandMap(); const char *mp = getenv("UM_SKIRMISH_MAP"); if (getenv("UM_SERVER") && mp && strstr(mp, "Living World Grand")) UmEnsureGrandMap(); }   // the very large map is made from the local Tournament Desert on first use
 		if (const char *srv = getenv("UM_SERVER")) { gUmServerMode = getenv("UM_STANDALONE_WINDOWED") == NULL; startServer(atoi(srv)); return; }
 		const char *target = getenv("UM_CLIENT");
 		if (!target) return;
@@ -143,6 +149,7 @@ public:
 		Int n = ai ? atoi(ai) : 0; if (n < 0) n = 0; if (n > MAX_SLOTS - 1) n = MAX_SLOTS - 1;
 		UmWorldDesc w; w.map = map; w.seed = getenv("UM_SEED") ? atoi(getenv("UM_SEED")) : 12345;
 		w.synthStarts = getenv("UM_SYNTH_STARTS") ? atoi(getenv("UM_SYNTH_STARTS")) : 0;
+		w.speed = getenv("UM_GAME_SPEED") ? atoi(getenv("UM_GAME_SPEED")) : 30; if (w.speed < 15) w.speed = 15; if (w.speed > 60) w.speed = 60;
 		UmSlotDesc obs = { SLOT_PLAYER, PLAYERTEMPLATE_OBSERVER, -1, -1, -1, "Server" }; w.slots.push_back(obs);
 		for (Int i = 1; i <= n; ++i) { UmSlotDesc s = { SLOT_MED_AI, PLAYERTEMPLATE_RANDOM, i, i - 1, -1, "" }; w.slots.push_back(s); }
 		{ int h = getenv("UM_HUMAN_SLOTS") ? atoi(getenv("UM_HUMAN_SLOTS")) : 0; for (int k = 0; k < h && (int)w.slots.size() < MAX_SLOTS; ++k) { UmSlotDesc s = { SLOT_PLAYER, PLAYERTEMPLATE_RANDOM, (int)w.slots.size(), (int)w.slots.size() - 1, -1, "~free" }; w.slots.push_back(s); } }
