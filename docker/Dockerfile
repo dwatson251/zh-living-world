@@ -10,7 +10,7 @@ RUN curl -fsSL -o /wine.tar.xz "https://github.com/Kron4ek/Wine-Builds/releases/
  && echo "${WINE_SHA256}  /wine.tar.xz" | sha256sum -c - && mkdir /opt/wine && tar -xf /wine.tar.xz -C /opt/wine --strip-components=1
 
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl tini libfreetype6 libx11-6 libxext6 libxcursor1 libxrandr2 libxi6 libxrender1 libxfixes3 libxcomposite1 libxinerama1 \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl tini xvfb xauth libfreetype6 libx11-6 libxext6 libxcursor1 libxrandr2 libxi6 libxrender1 libxfixes3 libxcomposite1 libxinerama1 \
  && rm -rf /var/lib/apt/lists/* && useradd -u 1000 -m lw
 COPY --from=wine /opt/wine /opt/wine
 ENV PATH=/opt/wine/bin:$PATH WINEPREFIX=/data/world/.wineprefix WINEDEBUG=-all

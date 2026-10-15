@@ -27,7 +27,13 @@ shopt -u dotglob nullglob
 
 export LW_GAME_DIR='Z:'"$(echo "$RUN" | tr / '\\')" LW_WORLD_DIR='Z:'"$(echo "$WORLD" | tr / '\\')"
 export WINEPREFIX=${WINEPREFIX:-/data/world/.wineprefix} WINEDEBUG=${WINEDEBUG:--all}
-unset DISPLAY WAYLAND_DISPLAY
+unset WAYLAND_DISPLAY
+# Wine needs some display to create its desktop window, even for a headless server: use a virtual one
+export DISPLAY=:99
+Xvfb :99 -screen 0 1024x768x24 -nolisten tcp >/tmp/xvfb.log 2>&1 &
+XPID=$!
+for i in $(seq 1 50); do [ -S /tmp/.X11-unix/X99 ] && break; sleep 0.2; done
+[ -S /tmp/.X11-unix/X99 ] || { say "ERROR: virtual display (Xvfb) did not start:"; cat /tmp/xvfb.log; exit 3; }
 # the Wine prefix lives in the world volume and is created on first start (about a minute); a half-made one is thrown away
 if [ ! -f "$WINEPREFIX/.lw-ready" ]; then
 	say "creating the Wine prefix (first start only); host kernel $(uname -r), $(id -un) uid $(id -u), HOME=${HOME:-unset}"
@@ -52,6 +58,6 @@ TAILPID=$!
 say "starting Living World under Wine (game files: $GAME, world: $WORLD)"
 wine "$LWHOME/zh_host.exe" "${args[@]}" "$@" > /dev/null 2>&1 &
 WPID=$!
-trap 'say "stopping"; kill $WPID 2>/dev/null; wineserver -k 2>/dev/null; kill $TAILPID 2>/dev/null; exit 0' TERM INT
+trap 'say "stopping"; kill $WPID 2>/dev/null; wineserver -k 2>/dev/null; kill $XPID 2>/dev/null; kill $TAILPID 2>/dev/null; exit 0' TERM INT
 wait $WPID || true
 say "host exited"; kill $TAILPID 2>/dev/null; exit 1

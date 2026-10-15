@@ -141,3 +141,5 @@ jobs:
           out=$(docker run --rm -v "$PWD/empty:/data/zerohour:ro" "$img" 2>&1); rc=$?
           echo "$out"; [ $rc -eq 2 ] && echo "$out" | grep -q "Missing" || { echo "expected exit 2 with a Missing-files message"; exit 1; }
           docker run --rm --entrypoint timeout "$img" 400 wine --version
+          # the entrypoint's first-start path on a machine with no game files cannot reach Wine, so exercise the Wine prefix creation directly
+          docker run --rm --entrypoint bash "$img" -c 'Xvfb :99 -screen 0 800x600x24 -nolisten tcp >/dev/null 2>&1 & sleep 2; export DISPLAY=:99; time timeout 300 wineboot -i && timeout 60 wineserver -w && test -f "$WINEPREFIX/system.reg" && echo PREFIX_OK'
