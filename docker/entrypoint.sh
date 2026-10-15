@@ -30,9 +30,16 @@ export WINEPREFIX=${WINEPREFIX:-/data/world/.wineprefix} WINEDEBUG=${WINEDEBUG:-
 unset DISPLAY WAYLAND_DISPLAY
 # the Wine prefix lives in the world volume and is created on first start (about a minute); a half-made one is thrown away
 if [ ! -f "$WINEPREFIX/.lw-ready" ]; then
-	say "creating the Wine prefix (first start only)"
+	say "creating the Wine prefix (first start only); host kernel $(uname -r), $(id -un) uid $(id -u), HOME=${HOME:-unset}"
 	rm -rf "$WINEPREFIX"
-	if timeout 300 wineboot -i >/dev/null 2>&1 && timeout 60 wineserver -w; then touch "$WINEPREFIX/.lw-ready"; else say "ERROR: could not create the Wine prefix"; exit 3; fi
+	WLOG=$(mktemp)
+	if WINEDEBUG=err+all timeout 300 wineboot -i >"$WLOG" 2>&1; then rc=0; else rc=$?; fi
+	timeout 60 wineserver -w >>"$WLOG" 2>&1 || true
+	if [ $rc -eq 0 ] && [ -f "$WINEPREFIX/system.reg" ]; then touch "$WINEPREFIX/.lw-ready"
+	else
+		say "ERROR: could not create the Wine prefix (wineboot exit code $rc; 124 = timed out). Wine output:"; tail -n 40 "$WLOG" | sed 's/^/[wine] /'
+		say "free space in $WORLD: $(df -h "$WORLD" | tail -1)"; exit 3
+	fi
 fi
 cd "$LWHOME"
 
