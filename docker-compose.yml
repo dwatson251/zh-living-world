@@ -1,0 +1,29 @@
+# Living World server: paste this into a Portainer stack (Stacks > Add stack > Web editor) or run `docker compose up -d`.
+# You must own Command & Conquer Generals Zero Hour: the image has no game files. Put a copy of the install folder on the host and set ZH_FILES.
+services:
+  living-world:
+    image: ghcr.io/dwatson251/zh-living-world:${LW_TAG:-latest}
+    container_name: living-world
+    restart: unless-stopped
+    stop_grace_period: 30s
+    ports:
+      - "${LW_PORT:-7777}:7777/tcp"     # game
+      - "${LW_STATUS_PORT:-8080}:8080/tcp"   # status page
+    volumes:
+      - lw-world:/data/world                          # the saved world (keep this!)
+      - ${ZH_FILES:-/srv/zerohour}:/data/zerohour:ro,z   # YOUR Zero Hour install folder (read-only; ,z = SELinux label for CentOS)
+    environment:
+      LW_PORT: "7777"            # port inside the container; change the published port above instead
+      LW_STATUS_PORT: "8080"
+      LW_NAME: "${LW_NAME:-Living World}"
+      LW_MAP: "${LW_MAP:-Maps\\Tournament Desert\\Tournament Desert.map}"
+      LW_MAX_PLAYERS: "${LW_MAX_PLAYERS:-16}"
+      LW_MAX_AI: "${LW_MAX_AI:-16}"
+      LW_START_AI: "${LW_START_AI:-4}"
+      LW_AI_POOL: "${LW_AI_POOL:-24}"
+      LW_GAME_SPEED: "${LW_GAME_SPEED:-30}"
+      LW_EPOCH_SECS: "${LW_EPOCH_SECS:-300}"
+      LW_START_CASH: "${LW_START_CASH:-10000}"
+      # every other setting in um_server.ini works the same way: LW_<SETTING_NAME_IN_CAPITALS>
+volumes:
+  lw-world:
