@@ -13,14 +13,12 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl tini libfreetype6 libx11-6 libxext6 libxcursor1 libxrandr2 libxi6 libxrender1 libxfixes3 libxcomposite1 libxinerama1 \
  && rm -rf /var/lib/apt/lists/* && useradd -u 1000 -m lw
 COPY --from=wine /opt/wine /opt/wine
-ENV PATH=/opt/wine/bin:$PATH WINEPREFIX=/opt/wineprefix WINEDEBUG=-all WINEARCH=win64
+ENV PATH=/opt/wine/bin:$PATH WINEPREFIX=/data/world/.wineprefix WINEDEBUG=-all
 COPY LivingWorld/zh_host.exe LivingWorld/zh_client.exe LivingWorld/um_server.ini /opt/livingworld/
 COPY docker/entrypoint.sh docker/healthcheck.sh /usr/local/bin/
-RUN mkdir -p /data/world /data/zerohour /data/config /opt/wineprefix && chown -R lw:lw /data /opt/wineprefix
+RUN mkdir -p /data/world /data/zerohour /data/config && chown -R lw:lw /data
 USER lw
-# create the Wine prefix once, at build time
-RUN wineboot -i 2>/dev/null; wineserver -w
 VOLUME ["/data/world"]
 EXPOSE 7777/tcp 8080/tcp
-HEALTHCHECK --interval=30s --timeout=5s --start-period=240s --retries=3 CMD ["/usr/local/bin/healthcheck.sh"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=480s --retries=3 CMD ["/usr/local/bin/healthcheck.sh"]
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]

@@ -133,3 +133,11 @@ jobs:
           file: ctx/docker/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
+      - name: Smoke test the pushed image (no game files)
+        run: |
+          img="ghcr.io/$(echo '${{ github.repository }}' | tr 'A-Z' 'a-z'):${{ github.ref_name }}"
+          mkdir empty
+          set +e
+          out=$(docker run --rm -v "$PWD/empty:/data/zerohour:ro" "$img" 2>&1); rc=$?
+          echo "$out"; [ $rc -eq 2 ] && echo "$out" | grep -q "Missing" || { echo "expected exit 2 with a Missing-files message"; exit 1; }
+          docker run --rm --entrypoint timeout "$img" 400 wine --version

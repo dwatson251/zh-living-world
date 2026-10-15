@@ -26,8 +26,14 @@ for e in "$GAME"/*; do ln -s "$e" "$RUN/$(basename "$e")"; done
 shopt -u dotglob nullglob
 
 export LW_GAME_DIR='Z:'"$(echo "$RUN" | tr / '\\')" LW_WORLD_DIR='Z:'"$(echo "$WORLD" | tr / '\\')"
-export WINEPREFIX=${WINEPREFIX:-/opt/wineprefix} WINEDEBUG=${WINEDEBUG:--all}
+export WINEPREFIX=${WINEPREFIX:-/data/world/.wineprefix} WINEDEBUG=${WINEDEBUG:--all}
 unset DISPLAY WAYLAND_DISPLAY
+# the Wine prefix lives in the world volume and is created on first start (about a minute); a half-made one is thrown away
+if [ ! -f "$WINEPREFIX/.lw-ready" ]; then
+	say "creating the Wine prefix (first start only)"
+	rm -rf "$WINEPREFIX"
+	if timeout 300 wineboot -i >/dev/null 2>&1 && timeout 60 wineserver -w; then touch "$WINEPREFIX/.lw-ready"; else say "ERROR: could not create the Wine prefix"; exit 3; fi
+fi
 cd "$LWHOME"
 
 args=(--cli)
