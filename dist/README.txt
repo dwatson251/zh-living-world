@@ -31,7 +31,10 @@ If you leave, your base stays (30 minutes by default, longer while it is in a fi
 
 World rules (all adjustable by the server)
 ------------------------------------------
-- Rent is due every 15 minutes (the first period is free): the larger of a minimum and a share of what you own, or a flat amount. It can only be paid with a command center.
+- Spawn protection: when you join, you and everything you own take no damage and computer players leave you alone for a few minutes (3 by default). Your buildings and units glow red-gold while it lasts.
+  Reconnecting does not renew it until 15 minutes after it ended. The server sets the length (immunity_secs, 0 = off) and the cooldown (immunity_cooldown_secs).
+- Rent is due every 15 minutes (the first full period is free, a server setting: rent_grace_cycles): the larger of a minimum and a share of what you own, or a flat amount. It can only be paid with a command center.
+  A panel at the bottom left, above the control bar, counts down to the next payment, shows how many unpaid stacks you have, and the time left on your protection. You hear the cash sound when rent is paid.
 - Unpaid rent stacks. Each stack hurts more, and the damage lands in order: your fighting units first; when none are left your buildings (not the command center);
   then dozers and workers; the command center last. Paying a stack off needs a command center and cash.
 - Knocking out a player's last unit pays you a share of their cash plus a flat amount, if you were the last to hit them within the last 5 minutes.

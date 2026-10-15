@@ -118,6 +118,7 @@ public:
 	virtual View *createView(void) { return NEW NullView; }
 };
 
+void UmDrawRentHud(void) {}   // the headless build draws nothing
 class UmAudio : public NullAudioManager { public: virtual Bool isMusicAlreadyLoaded(void) const { return TRUE; } };  // no CD prompt
 
 class UmSnow : public SnowManager { public: virtual void update(void) {} };

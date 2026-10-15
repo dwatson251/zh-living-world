@@ -44,6 +44,9 @@ static const Setting kSettings[] = {
 	{ "rent_fixed",             "Rent: flat amount (0 = by value)", "0",                "--rent-fixed",         "rules" },
 	{ "rent_percent",           "Rent: % of base value",            "5",                "--rent-percent",       "rules" },
 	{ "rent_floor",             "Rent: minimum amount",             "500",              "--rent-floor",         "rules" },
+	{ "rent_grace_cycles",      "Rent: free cycles before the first payment","1",           "--rent-grace",         "rules" },
+	{ "immunity_secs",          "Spawn protection when joining (seconds, 0 = off)","180",    "--immunity-secs",      "rules" },
+	{ "immunity_cooldown_secs", "Protection is not renewed for (seconds after it ends)","900","--immunity-cooldown",  "rules" },
 	{ "rent_damage_percent",    "Damage per unpaid stack (%)",      "1",                "--rent-damage",        "rules" },
 	{ "absent_minutes",         "Keep an absent base (minutes)",    "30",               "--absent-minutes",     "rules" },
 	{ "combat_secs",            "Combat grace period (seconds)",    "30",               "--combat-secs",        "rules" },
@@ -190,6 +193,9 @@ struct Runner
 		env.push_back("UM_RENT_FIXED=" + cfg["rent_fixed"]);
 		env.push_back("UM_RENT_PCT=" + cfg["rent_percent"]);
 		env.push_back("UM_RENT_FLOOR=" + cfg["rent_floor"]);
+		env.push_back("UM_RENT_GRACE=" + cfg["rent_grace_cycles"]);
+		sprintf(b, "%d", num(cfg, "immunity_secs", 180) * 30); env.push_back(std::string("UM_IMMUNE_FRAMES=") + b);
+		sprintf(b, "%d", num(cfg, "immunity_cooldown_secs", 900) * 30); env.push_back(std::string("UM_IMMUNE_COOLDOWN_FRAMES=") + b);
 		sprintf(b, "%d", num(cfg, "rent_damage_percent", 1) * 10); env.push_back(std::string("UM_RENT_DMG_PERMILLE=") + b);
 		if (fileExists(worldDir + "\\epoch.sav")) env.push_back("UM_RESUME=1");
 

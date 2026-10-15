@@ -7,6 +7,7 @@ deps="${DEPS:-$here/deps}"; mkdir -p "$deps"
 ea_sha="$(tr -d '[:space:]' < "$here/EA_SOURCE_SHA")"
 llvm_tag="20261006"; llvm_name="llvm-mingw-${llvm_tag}-msvcrt-ubuntu-22.04-x86_64"
 zlib_ver="1.3.1"
+ma_ver="0.11.22"; ma_sha="9019743287e443c55e5737a7297f38e5e358561701d6db2d905afb114390c410"   # miniaudio (public domain / MIT-0): the client's sound
 
 echo "== EA source ($ea_sha)"
 if [ ! -d "$deps/ea/.git" ]; then
@@ -33,6 +34,13 @@ echo "== zlib $zlib_ver"
 if [ ! -f "$here/deps/zlib-$zlib_ver/zlib.h" ]; then
   curl -fsSL "https://github.com/madler/zlib/releases/download/v${zlib_ver}/zlib-${zlib_ver}.tar.gz" -o "$deps/zlib.tar.gz"
   mkdir -p "$here/deps"; tar -xzf "$deps/zlib.tar.gz" -C "$here/deps"; rm -f "$deps/zlib.tar.gz"
+fi
+
+echo "== miniaudio $ma_ver"
+if [ ! -f "$here/deps/miniaudio-$ma_ver/miniaudio.h" ]; then
+  mkdir -p "$here/deps/miniaudio-$ma_ver"
+  curl -fsSL "https://raw.githubusercontent.com/mackron/miniaudio/${ma_ver}/miniaudio.h" -o "$here/deps/miniaudio-$ma_ver/miniaudio.h"
+  echo "$ma_sha  $here/deps/miniaudio-$ma_ver/miniaudio.h" | sha256sum -c -
 fi
 
 echo "== cmake and ninja"

@@ -48,9 +48,9 @@ struct Rd {
 	std::string str() { unsigned n = u32(); if (bad || p + n > e) { bad = true; return std::string(); } std::string s(p, n); p += n; return s; }
 };
 
-enum { T_HELLO = 1, T_WORLD, T_FRAME, T_ADVANCE, T_CMD, T_CRC, T_CRCRESULT, T_EPOCH, T_WELCOME, T_KICK };
+enum { T_HELLO = 1, T_WORLD, T_FRAME, T_ADVANCE, T_CMD, T_CRC, T_CRCRESULT, T_EPOCH, T_WELCOME, T_KICK, T_RENT };
 const unsigned UM_MAGIC = 0x574C4D55; // 'UMLW'
-const unsigned UM_VERSION = 3;
+const unsigned UM_VERSION = 4;   // 4: spawn protection (Player state in snapshots), T_RENT
 static const unsigned UM_WORLD_FILE_MAGIC = 0x31574d55;   // "UMW1": world.bin written with the speed field
 
 bool isNetCommand(const GameMessage *m)
@@ -343,9 +343,11 @@ private:
 	unsigned m_epochFrame, m_epochRaw, m_epochInterval; std::string m_epochZ;                     // server: latest canonical snapshot
 	std::map<unsigned, std::pair<unsigned, std::string> > m_epochInbox;                              // client: snapshots waiting for their frame
 	bool m_needSnapshot;                                                                              // client: world will arrive as a snapshot
-	int m_mySlot;
+	int m_mySlot; UmRentInfo m_rentInfo;
 public:
 	int mySlot() const { return m_mySlot; }
+	const UmRentInfo &rentInfo() const { return m_rentInfo; }
+	unsigned worldSpeed() const { return (unsigned)m_world.speed; }
 	bool catchUp(unsigned *frame, unsigned *live) const { if (m_role != UM_ROLE_CLIENT || !TheGameLogic || !TheGameLogic->isInGame()) return false; *frame = TheGameLogic->getFrame(); *live = m_limit; return m_limit > *frame + 150; }
 private:
 	std::string m_dir; bool m_resumePending; unsigned m_resumeTarget; std::map<unsigned, std::string> m_replay;   // server persistence: world dir, restart state
@@ -485,7 +487,8 @@ private:
 	// ---------------------------------------------------------------- world rules (server)
 	// Every rule decision is made here, from the server's own copy of the simulation, and reaches the replicas only as explicit commands.
 	// A "record" is a human identity (secret key) that owns a slot; it outlives the connection (absent players keep their base).
-	struct Rec { std::string key; int slot; unsigned bound, left, lastCombat, nextRent; int missed; bool expiring; Rec() : slot(-1), bound(0), left(0), lastCombat(0), nextRent(0), missed(0), expiring(false) {} };
+	struct Rec { std::string key; int slot; unsigned bound, left, lastCombat, nextRent; int missed; bool expiring; unsigned immuneUntil, lastImmune, paid, amountAt; int amount;   // immuneUntil: protected until this frame; lastImmune: when the last protection ended; paid: rent payments so far (the client plays a sound on each); amount/amountAt: cached rent amount
+	Rec() : slot(-1), bound(0), left(0), lastCombat(0), nextRent(0), missed(0), expiring(false), immuneUntil(0), lastImmune(0), paid(0), amountAt(0), amount(0) {} };
 	UmWorldDesc m_worldEpoch;                    // the world description as of the last epoch (what joiners and a restart start from)
 	std::map<std::string, Rec> m_recs;           // human identities by key
 	std::map<int, std::string> m_slotKey;        // human slot -> key
@@ -505,7 +508,7 @@ private:
 	{
 		std::string o; char b[256];
 		for (std::map<std::string, Rec>::const_iterator it = m_recs.begin(); it != m_recs.end(); ++it)
-		{ const Rec &r = it->second; sprintf(b, " %d %u %u %u %u %d %d\n", r.slot, r.bound, r.left, r.lastCombat, r.nextRent, r.missed, r.expiring ? 1 : 0); o += "P " + r.key + b; }
+		{ const Rec &r = it->second; sprintf(b, " %d %u %u %u %u %d %d %u %u %u\n", r.slot, r.bound, r.left, r.lastCombat, r.nextRent, r.missed, r.expiring ? 1 : 0, r.immuneUntil, r.lastImmune, r.paid); o += "P " + r.key + b; }
 		for (std::map<int, unsigned>::const_iterator it = m_aiSlots.begin(); it != m_aiSlots.end(); ++it) { sprintf(b, "A %d %u\n", it->first, it->second); o += b; }
 		atomicWrite("players.txt", o);
 	}
@@ -516,7 +519,7 @@ private:
 		while (p < t.size())
 		{
 			size_t e = t.find('\n', p); if (e == std::string::npos) e = t.size(); std::string ln = t.substr(p, e - p); p = e + 1;
-			if (ln.size() > 2 && ln[0] == 'P') { char key[200]; Rec r; int ex; if (sscanf(ln.c_str() + 2, "%199s %d %u %u %u %u %d %d", key, &r.slot, &r.bound, &r.left, &r.lastCombat, &r.nextRent, &r.missed, &ex) == 8) { r.key = key; r.expiring = ex != 0; m_recs[r.key] = r; m_slotKey[r.slot] = r.key; } }
+			if (ln.size() > 2 && ln[0] == 'P') { char key[200]; Rec r; int ex; int got = sscanf(ln.c_str() + 2, "%199s %d %u %u %u %u %d %d %u %u %u", key, &r.slot, &r.bound, &r.left, &r.lastCombat, &r.nextRent, &r.missed, &ex, &r.immuneUntil, &r.lastImmune, &r.paid); if (got == 8 || got == 11) { r.key = key; r.expiring = ex != 0; m_recs[r.key] = r; m_slotKey[r.slot] = r.key; } }
 			else if (ln.size() > 2 && ln[0] == 'A') { int sl; unsigned fr; if (sscanf(ln.c_str() + 2, "%d %u", &sl, &fr) == 2) m_aiSlots[sl] = fr; }
 		}
 	}
@@ -532,6 +535,15 @@ private:
 	void queueGrant(int slot, int amount) { GameMessage *m = mk(GameMessage::MSG_UM_GRANT_CASH); m->appendIntegerArgument(slot); m->appendIntegerArgument(amount); queueCmd(m); }
 	void queueCharge(int slot, int amount) { GameMessage *m = mk(GameMessage::MSG_UM_CHARGE); m->appendIntegerArgument(slot); m->appendIntegerArgument(amount); queueCmd(m); }
 	void queueRefill(int cash) { GameMessage *m = mk(GameMessage::MSG_UM_REFILL_SUPPLY); m->appendIntegerArgument(cash); queueCmd(m); }
+	void queueImmune(int slot, int untilFrame) { GameMessage *m = mk(GameMessage::MSG_UM_IMMUNE); m->appendIntegerArgument(slot); m->appendIntegerArgument(untilFrame); queueCmd(m); }
+	// spawn protection for a connecting player (server setting UM_IMMUNE_FRAMES; 0 = off). Reconnecting does not renew it until UM_IMMUNE_COOLDOWN_FRAMES after the last one ended.
+	void grantImmunity(Rec &r, unsigned f)
+	{
+		unsigned dur = envU("UM_IMMUNE_FRAMES", 5400), cool = envU("UM_IMMUNE_COOLDOWN_FRAMES", 27000);
+		if (dur == 0 || (r.lastImmune != 0 && f < r.lastImmune + cool)) return;
+		r.immuneUntil = f + dur; r.lastImmune = r.immuneUntil; queueImmune(r.slot, (int)r.immuneUntil); saveRecs();
+		printf("[um] server: slot %d is protected until frame %u\n", r.slot, r.immuneUntil);
+	}
 	void queueRentDamage(int slot, int permille) { GameMessage *m = mk(GameMessage::MSG_UM_RENT_DAMAGE); m->appendIntegerArgument(slot); m->appendIntegerArgument(permille); queueCmd(m); }
 	void queueSelfDestruct(int slot) { Player *p = playerForSlot(slot); if (!p) return; GameMessage *m = mk(GameMessage::MSG_SELF_DESTRUCT); m->friend_setPlayerIndex(p->getPlayerIndex()); m->appendBooleanArgument(FALSE); queueCmd(m); }
 	void sendMsg(UmConn &c, unsigned type, const std::string &payload) { Wr f; frameMsg(f, type, payload); c.out += f.b; }
@@ -564,12 +576,13 @@ private:
 	void bindHuman(UmConn &c, unsigned f)
 	{
 		int slot = freeHumanSlot(); if (slot < 0) return;
-		Rec r; r.key = c.name; r.slot = slot; r.bound = f; r.nextRent = f + 2 * envU("UM_RENT_FRAMES", 27000);   // the first interval is free
+		Rec r; r.key = c.name; r.slot = slot; r.bound = f; r.nextRent = f + (1 + envU("UM_RENT_GRACE", 1)) * envU("UM_RENT_FRAMES", 27000);   // grace: this many full rent cycles are free (default 1)
 		m_recs[c.name] = r; m_slotKey[slot] = c.name; c.slot = slot; c.boundFrame = f; saveRecs();
 		int tmpl = -1;   // the occupant's faction, if it is one the skirmish AI scripts and the starting base support
 		if (!c.faction.empty()) { int idx = ThePlayerTemplateStore->getTemplateNumByName(AsciiString(c.faction.c_str())); const PlayerTemplate *pt = idx >= 0 ? ThePlayerTemplateStore->getNthPlayerTemplate(idx) : NULL; if (pt && !pt->isObserver() && (pt->getSide() == "America" || pt->getSide() == "China" || pt->getSide() == "GLA") && !pt->getStartingBuilding().isEmpty()) tmpl = idx; }
 		if (slot < (int)m_world.slots.size()) { m_world.slots[slot].profT = tmpl + 1; m_world.slots[slot].rgb = c.rgb; m_world.slots[slot].nick = c.nick; }
 		queueBind(slot, (int)envU("UM_START_CASH", 10000), tmpl, c.rgb, c.nick);
+		grantImmunity(m_recs[c.name], f);
 		Wr ww; ww.i32(slot); sendMsg(c, T_WELCOME, ww.b);
 		printf("[um] server: client %d bound to slot %d (new base)\n", c.id, slot);
 	}
@@ -632,10 +645,19 @@ private:
 			if (!r.expiring && f >= r.nextRent)   // rent: all or nothing, per interval
 			{
 				int amount = rentAmount(p);
-				if (hasCommandCenter(p) && (int)p->getMoney()->countMoney() >= amount) { /* rent can only be paid through a command center */ queueCharge(r.slot, amount); printf("[um] server: rent %d charged to slot %d\n", amount, r.slot); }
+				if (hasCommandCenter(p) && (int)p->getMoney()->countMoney() >= amount) { /* rent can only be paid through a command center */ queueCharge(r.slot, amount); ++r.paid; printf("[um] server: rent %d charged to slot %d\n", amount, r.slot); }
 				else { ++r.missed; printf("[um] server: slot %d MISSED rent %d (stack %d)\n", r.slot, amount, r.missed); }
 				r.nextRent += RENT; saveRecs();
 			}
+		}
+		// tell each connected player where their rent and protection stand (the client draws the countdown and plays the paid sound)
+		for (std::map<std::string, Rec>::iterator it = m_recs.begin(); it != m_recs.end(); ++it)
+		{
+			Rec &r = it->second; UmConn *c = connOfKey(r.key); if (!c || c->slot != r.slot) continue;
+			Player *p = playerForSlot(r.slot); if (!p) continue;
+			if (r.amount == 0 || f >= r.amountAt + 300) { r.amount = rentAmount(p); r.amountAt = f; }
+			Wr w; w.u32(f); w.u32(r.nextRent); w.u32(RENT); w.i32(r.missed); w.i32(r.amount); w.u32(r.immuneUntil); w.u32(r.paid); w.u32(r.bound + envU("UM_RENT_GRACE", 1) * RENT); w.u8(r.expiring ? 1 : 0);
+			sendMsg(*c, T_RENT, w.b);
 		}
 		// slow restocking of every supply dock (server setting: cash per dock and interval; 0 = never)
 		{
@@ -650,7 +672,7 @@ private:
 			{
 				Rec &r = it->second; if (r.missed <= 0 || r.expiring) continue; Player *p = playerForSlot(r.slot); if (!p) continue;
 				int amount = (int)envU("UM_RENT_FLOOR", 500); if (envU("UM_RENT_FIXED", 0) > 0) amount = (int)envU("UM_RENT_FIXED", 0);
-				if (hasCommandCenter(p) && (int)p->getMoney()->countMoney() >= amount) { queueCharge(r.slot, amount); --r.missed; printf("[um] server: slot %d paid off a missed cycle (stack %d)\n", r.slot, r.missed); saveRecs(); }
+				if (hasCommandCenter(p) && (int)p->getMoney()->countMoney() >= amount) { queueCharge(r.slot, amount); --r.missed; ++r.paid; printf("[um] server: slot %d paid off a missed cycle (stack %d)\n", r.slot, r.missed); saveRecs(); }
 				else { unsigned pm = (unsigned)r.missed * envU("UM_RENT_DMG_PERMILLE", 10), cap = envU("UM_RENT_DMG_CAP", 1000); if (pm > cap) pm = cap; queueRentDamage(r.slot, (int)pm); }   // more unpaid stacks, more damage
 			}
 		}
@@ -775,7 +797,7 @@ private:
 				if (ks != m_recs.end())
 				{
 					for (size_t j = 0; j < m_conns.size(); ++j) if (&m_conns[j] != &c && m_conns[j].live && m_conns[j].name == c.name && m_conns[j].slot >= 0) { m_conns[j].slot = -1; Wr kw; kw.str("replaced by a new connection"); sendMsg(m_conns[j], T_KICK, kw.b); }
-					c.slot = ks->second.slot; c.boundFrame = ks->second.bound; ks->second.left = 0; saveRecs();
+					c.slot = ks->second.slot; c.boundFrame = ks->second.bound; ks->second.left = 0; saveRecs(); grantImmunity(ks->second, f);
 					printf("[um] server: client %d bound to slot %d (returning player)\n", c.id, c.slot);
 				}
 				else if (freeHumanSlot() >= 0) bindHuman(c, f);
@@ -862,6 +884,7 @@ private:
 			}
 		}
 		else if (type == T_EPOCH) { unsigned f = r.u32(), raw = r.u32(); m_epochInbox[f] = std::make_pair(raw, payload.substr(8)); }
+		else if (type == T_RENT) { UmRentInfo ri; ri.valid = true; ri.serverFrame = r.u32(); ri.nextRent = r.u32(); ri.interval = r.u32(); ri.missed = r.i32(); ri.amount = r.i32(); ri.immuneUntil = r.u32(); ri.paid = r.u32(); ri.graceEnd = r.u32(); ri.expiring = r.u8() != 0; if (!r.bad) m_rentInfo = ri; }
 		else if (type == T_WELCOME) { m_mySlot = r.i32(); printf("[um] client: welcome, slot %d\n", m_mySlot); }
 		else if (type == T_KICK) { std::string why = r.str(); printf("[um] client: KICKED (%s)\n", why.c_str()); m_mySlot = -1; gUmKickReason = why; gUmKickTick = GetTickCount() | 1; if (!gUmHasUi && !getenv("UM_STAY_AFTER_KICK")) { fflush(stdout); ExitProcess(0); } }
 		else if (type == T_FRAME) { unsigned f = r.u32(); m_inbox[f] = payload.substr(4); }   // keep count+messages
@@ -881,5 +904,7 @@ void UmNetStartClient(const char *host, int port)
 void UmNetPostUpdate() { if (TheUmNet) TheUmNet->postUpdate(); }
 bool UmNetCatchUp(unsigned *frame, unsigned *live) { return TheUmNet && TheUmNet->catchUp(frame, live); }
 int UmNetMySlot() { return TheUmNet ? TheUmNet->mySlot() : -1; }
+unsigned UmNetSpeed() { return TheUmNet ? TheUmNet->worldSpeed() : 30; }
+bool UmNetRentInfo(UmRentInfo *out) { if (!TheUmNet || !TheUmNet->rentInfo().valid) return false; *out = TheUmNet->rentInfo(); return true; }
 
 void UmNoteCombatImpl(Int a, Int b) { if (TheUmNet) TheUmNet->noteCombat(a, b); }

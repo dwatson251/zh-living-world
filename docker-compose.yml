@@ -24,6 +24,9 @@ services:
       LW_GAME_SPEED: "${LW_GAME_SPEED:-30}"
       LW_EPOCH_SECS: "${LW_EPOCH_SECS:-300}"
       LW_START_CASH: "${LW_START_CASH:-10000}"
+      LW_RENT_GRACE_CYCLES: "${LW_RENT_GRACE_CYCLES:-1}"          # free rent cycles before the first payment
+      LW_IMMUNITY_SECS: "${LW_IMMUNITY_SECS:-180}"                  # spawn protection for joining players (0 = off)
+      LW_IMMUNITY_COOLDOWN_SECS: "${LW_IMMUNITY_COOLDOWN_SECS:-900}"  # no new protection until this long after the last one ended
       # every other setting in um_server.ini works the same way: LW_<SETTING_NAME_IN_CAPITALS>
 volumes:
   lw-world:

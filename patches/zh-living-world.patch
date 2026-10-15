@@ -399,7 +399,7 @@ diff -ruN a/GameEngine/Include/Common/MapObject.h b/GameEngine/Include/Common/Ma
  #define MAP_HEIGHT_SCALE	(MAP_XY_FACTOR/16.0f)		//divide all map heights by 8.
 diff -ruN a/GameEngine/Include/Common/MessageStream.h b/GameEngine/Include/Common/MessageStream.h
 --- a/GameEngine/Include/Common/MessageStream.h	2026-10-13 16:49:44.961304129 +0100
-+++ b/GameEngine/Include/Common/MessageStream.h	2026-10-14 20:34:22.040798155 +0100
++++ b/GameEngine/Include/Common/MessageStream.h	2026-10-15 20:31:18.535945351 +0100
 @@ -46,8 +46,8 @@
  
  class Drawable;
@@ -411,7 +411,7 @@ diff -ruN a/GameEngine/Include/Common/MessageStream.h b/GameEngine/Include/Commo
  
  union GameMessageArgumentType														///< Union of possible data for given message type
  {
-@@ -592,6 +592,12 @@
+@@ -592,6 +592,13 @@
  		MSG_LOGIC_CRC,															///< CRC from the logic passed around in a network game :)
  		MSG_SET_MINE_CLEARING_DETAIL,								///< CRC from the logic passed around in a network game :)
  		MSG_ENABLE_RETALIATION_MODE,								///< Turn retaliation mode on or off for the specified player.
@@ -420,6 +420,7 @@ diff -ruN a/GameEngine/Include/Common/MessageStream.h b/GameEngine/Include/Commo
 +		MSG_UM_GRANT_CASH,													///< Living World: pay a slot (args: slot, amount), e.g. the last-hit bonus.
 +		MSG_UM_CHARGE,															///< Living World: take money from a slot (args: slot, amount), e.g. rent. Server-issued only.
 +		MSG_UM_RENT_DAMAGE,													///< Living World: damage everything a slot owns (args: slot, permille of max health).
++		MSG_UM_IMMUNE,															///< Living World: spawn protection for a slot (args: slot, last protected logic frame; 0 clears). Server-issued only.
 +		MSG_UM_REFILL_SUPPLY,												///< Living World: every supply dock gains this much cash worth of supplies (up to its starting stock). Server-issued only.
  
  		MSG_BEGIN_DEBUG_NETWORK_MESSAGES = 1900,		///< network messages that exist only in debug/internal builds. all grouped separately.
@@ -496,7 +497,7 @@ diff -ruN a/GameEngine/Include/Common/Override.h b/GameEngine/Include/Common/Ove
  }
 diff -ruN a/GameEngine/Include/Common/Player.h b/GameEngine/Include/Common/Player.h
 --- a/GameEngine/Include/Common/Player.h	2026-10-13 16:49:44.961304129 +0100
-+++ b/GameEngine/Include/Common/Player.h	2026-10-14 09:41:38.459561965 +0100
++++ b/GameEngine/Include/Common/Player.h	2026-10-15 20:31:18.527709157 +0100
 @@ -85,9 +85,9 @@
  
  class BattlePlanBonuses;
@@ -519,22 +520,34 @@ diff -ruN a/GameEngine/Include/Common/Player.h b/GameEngine/Include/Common/Playe
  	
  	/// a convenience function to test the ThingTemplate against the players canBuild flags
  	/// called by canBuild
-@@ -619,6 +619,10 @@
+@@ -538,6 +538,7 @@
+ 
+ 	/// get the relationship between this->that. 
+ 	Relationship getRelationship(const Team *that) const;
++	Relationship umRelationshipRaw(const Team *that) const;   ///< Living World: the relationship before the spawn-protection override
+ 
+ 	/// set the relationship between this->that. (note that this doesn't affect the that->this relationship.)
+ 	void setPlayerRelationship(const Player *that, Relationship r);
+@@ -619,6 +620,13 @@
  	Bool isPlayerActive(void) const;
  
  	Bool didPlayerPreorder( void ) const { return m_isPreorder; }
 +	Bool umIsPending( void ) const { return m_umPending; }   ///< Living World: a reserved slot nobody occupies; its scripts do not run
 +	void umSetPending( Bool p ) { m_umPending = p; }
++	Bool umIsImmune( void ) const;                                  ///< Living World: spawn protection is active (no damage taken; computer players do not treat us as an enemy)
++	void umSetImmuneUntil( UnsignedInt frame ) { m_umImmuneUntil = frame; }
++	UnsignedInt umImmuneUntil( void ) const { return m_umImmuneUntil; }
 +	void umApplyProfile( const PlayerTemplate *pt, UnsignedInt rgb, const UnicodeString &name );   ///< Living World: faction override, custom colour and name chosen by the occupant
 +	void umResetScripts( void );                              ///< Living World: restore this skirmish AI's scripts to their start-of-game state
  
  	/// Grab the scorekeeper so we can score up in here!
  	ScoreKeeper* getScoreKeeper( void ) { return &m_scoreKeeper; }
-@@ -789,6 +793,7 @@
+@@ -789,6 +797,8 @@
  	Bool									m_canBuildBase;			///< whether the current player is allowed to build Base buildings
  	Bool									m_observer;
  	Bool									m_isPreorder;
 +	Bool									m_umPending;
++	UnsignedInt						m_umImmuneUntil;
  	Real									m_skillPointsModifier;	///< Multiplied by skill points before they are applied
  
  	Bool									m_listInScoreScreen;	///< should this player be listed in the score screen or not.
@@ -845,7 +858,7 @@ diff -ruN a/GameEngine/Include/GameClient/Display.h b/GameEngine/Include/GameCli
  	virtual ~Display();
 diff -ruN a/GameEngine/Include/GameClient/Drawable.h b/GameEngine/Include/GameClient/Drawable.h
 --- a/GameEngine/Include/GameClient/Drawable.h	2026-10-13 16:49:44.965304176 +0100
-+++ b/GameEngine/Include/GameClient/Drawable.h	2026-10-13 19:08:40.872142963 +0100
++++ b/GameEngine/Include/GameClient/Drawable.h	2026-10-15 20:31:18.535945351 +0100
 @@ -56,7 +56,7 @@
  class Anim2DTemplate;
  class Image;
@@ -864,7 +877,15 @@ diff -ruN a/GameEngine/Include/GameClient/Drawable.h b/GameEngine/Include/GameCl
  {
  	STEALTHLOOK_NONE,								///< unit is not stealthed at all
  	STEALTHLOOK_VISIBLE_FRIENDLY,		///< unit is stealthed-but-visible due to friendly status
-@@ -254,7 +254,7 @@
+@@ -245,6 +245,7 @@
+ 	TINT_STATUS_POISONED		= 0x00000004,///< drawable tint color is open-sore red
+ 	TINT_STATUS_GAINING_SUBDUAL_DAMAGE		= 0x00000008,///< When gaining subdual damage, we tint SUBDUAL_DAMAGE_COLOR
+ 	TINT_STATUS_FRENZY			= 0x00000010,///< When frenzied, we tint FRENZY_COLOR
++	TINT_STATUS_UM_PROTECTED	= 0x00000020,///< Living World spawn protection: red-gold glow
+ 
+ };
+ 
+@@ -254,7 +255,7 @@
  // Note: these values are saved in save files, so you MUST NOT REMOVE OR CHANGE
  // existing values!
  //
@@ -2363,7 +2384,7 @@ diff -ruN a/GameEngine/Source/Common/INI/INIWater.cpp b/GameEngine/Source/Common
  	} else {
 diff -ruN a/GameEngine/Source/Common/MessageStream.cpp b/GameEngine/Source/Common/MessageStream.cpp
 --- a/GameEngine/Source/Common/MessageStream.cpp	2026-10-13 16:49:45.001304604 +0100
-+++ b/GameEngine/Source/Common/MessageStream.cpp	2026-10-14 20:34:22.040798155 +0100
++++ b/GameEngine/Source/Common/MessageStream.cpp	2026-10-15 20:31:18.535945351 +0100
 @@ -113,7 +113,7 @@
  		return ARGUMENTDATATYPE_UNKNOWN;
  	}
@@ -2373,7 +2394,7 @@ diff -ruN a/GameEngine/Source/Common/MessageStream.cpp b/GameEngine/Source/Commo
  
  	if (a != NULL)
  	{
-@@ -680,6 +680,12 @@
+@@ -680,6 +680,13 @@
  	CHECK_IF(MSG_OBJECT_JOINED_TEAM)
  	CHECK_IF(MSG_SET_MINE_CLEARING_DETAIL)
  	CHECK_IF(MSG_ENABLE_RETALIATION_MODE)
@@ -2382,6 +2403,7 @@ diff -ruN a/GameEngine/Source/Common/MessageStream.cpp b/GameEngine/Source/Commo
 +	CHECK_IF(MSG_UM_GRANT_CASH)
 +	CHECK_IF(MSG_UM_CHARGE)
 +	CHECK_IF(MSG_UM_RENT_DAMAGE)
++	CHECK_IF(MSG_UM_IMMUNE)
 +	CHECK_IF(MSG_UM_REFILL_SUPPLY)
  	return commandName;
  }
@@ -2473,16 +2495,44 @@ diff -ruN a/GameEngine/Source/Common/NameKeyGenerator.cpp b/GameEngine/Source/Co
  	m_sockets[hash] = b;
 diff -ruN a/GameEngine/Source/Common/RTS/Player.cpp b/GameEngine/Source/Common/RTS/Player.cpp
 --- a/GameEngine/Source/Common/RTS/Player.cpp	2026-10-13 16:49:45.005304649 +0100
-+++ b/GameEngine/Source/Common/RTS/Player.cpp	2026-10-14 09:41:38.459561965 +0100
-@@ -330,6 +330,7 @@
++++ b/GameEngine/Source/Common/RTS/Player.cpp	2026-10-15 20:31:18.531827255 +0100
+@@ -330,6 +330,8 @@
  	//Initializations inserted
  	m_canBuildUnits = TRUE;
  	m_canBuildBase  = TRUE;
 +	m_umPending = FALSE;
++	m_umImmuneUntil = 0;
  	m_cashBountyPercent = 0.0f;
  	m_color = 0;
  	m_currentSelection = NULL;
-@@ -758,6 +759,62 @@
+@@ -571,8 +573,26 @@
+ 
+ //=============================================================================
+ //DECLARE_PERF_TIMER(Player_getRelationship)
++Bool Player::umIsImmune( void ) const
++{
++	return m_umImmuneUntil != 0 && TheGameLogic && m_umImmuneUntil > TheGameLogic->getFrame();
++}
++
++// Living World spawn protection: computer players do not see a protected player's team as an enemy while the protection lasts.
+ Relationship Player::getRelationship(const Team *that) const
+ {
++	Relationship r = umRelationshipRaw(that);
++	if (r == ENEMIES && that && getPlayerType() == PLAYER_COMPUTER)
++	{
++		const Player *tp = that->getControllingPlayer();
++		if (tp && tp != this && tp->umIsImmune())
++			return NEUTRAL;
++	}
++	return r;
++}
++
++Relationship Player::umRelationshipRaw(const Team *that) const
++{
+ 	//USE_PERF_TIMER(Player_getRelationship)
+ 	if (that)
+ 	{
+@@ -758,6 +778,62 @@
  }
  
  //=============================================================================
@@ -2545,7 +2595,7 @@ diff -ruN a/GameEngine/Source/Common/RTS/Player.cpp b/GameEngine/Source/Common/R
  void Player::newMap()
  {
  	if (m_ai)
-@@ -2054,7 +2111,7 @@
+@@ -2054,7 +2130,7 @@
  //=============================================================================
  void Player::killPlayer(void)
  {
@@ -2554,17 +2604,19 @@ diff -ruN a/GameEngine/Source/Common/RTS/Player.cpp b/GameEngine/Source/Common/R
  		for (DLINK_ITERATOR<Team> iter = (*it)->iterate_TeamInstanceList(); !iter.done(); iter.advance()) {
  			Team *team = iter.cur();
  			if (!team) {
-@@ -4008,10 +4065,13 @@
+@@ -4008,10 +4084,15 @@
  {
  
  	// version
 -	const XferVersion currentVersion = 8;
-+	const XferVersion currentVersion = 9;
++	const XferVersion currentVersion = 10;
  	XferVersion version = currentVersion;
  	xfer->xferVersion( &version, currentVersion );
  
 +	if (version >= 9)
 +		xfer->xferBool( &m_umPending );
++	if (version >= 10)
++		xfer->xferUnsignedInt( &m_umImmuneUntil );
 +
  	// money
  	xfer->xferSnapshot( &m_money );
@@ -3079,6 +3131,46 @@ diff -ruN a/GameEngine/Source/Common/UserPreferences.cpp b/GameEngine/Source/Com
  		{
  			ladName.removeLastChar();
  		}
+diff -ruN a/GameEngine/Source/GameClient/Drawable.cpp b/GameEngine/Source/GameClient/Drawable.cpp
+--- a/GameEngine/Source/GameClient/Drawable.cpp	2026-10-13 16:49:45.013304747 +0100
++++ b/GameEngine/Source/GameClient/Drawable.cpp	2026-10-15 20:38:25.055654572 +0100
+@@ -253,6 +253,8 @@
+ const RGBColor SUBDUAL_DAMAGE_COLOR					= {-0.2f, -0.2f,  0.8f};
+ const RGBColor FRENZY_COLOR									= { 0.2f, -0.2f, -0.2f};
+ const RGBColor FRENZY_COLOR_INFANTRY				= { 0.0f, -0.7f, -0.7f};
++const RGBColor UM_PROTECTED_COLOR						= { 0.80f, -0.12f, -0.38f};
++const RGBColor UM_PROTECTED_COLOR_INFANTRY	= { 0.55f, -0.10f, -0.35f};
+ const Int MAX_ENABLED_MODULES								= 16;
+ 
+ // ------------------------------------------------------------------------------------------------
+@@ -1249,6 +1251,14 @@
+ 		}
+ 	}
+ 
++	// Living World spawn protection: show it on everything the protected player owns
++	if ( obj )
++	{
++		Player *umOwner = obj->getControllingPlayer();
++		if ( umOwner && umOwner->umIsImmune() && !obj->isEffectivelyDead() ) setTintStatus( TINT_STATUS_UM_PROTECTED );
++		else clearTintStatus( TINT_STATUS_UM_PROTECTED );
++	}
++
+ 	//Lets figure out whether we should be changing colors right about now
+ 	// we'll use an ifelseif ladder since we are scanning bits
+ 	if( m_prevTintStatus != m_tintStatus )// edge test 
+@@ -1259,6 +1269,12 @@
+ 				m_colorTintEnvelope = newInstance(TintEnvelope);
+ 			m_colorTintEnvelope->play( &DARK_GRAY_DISABLED_COLOR, 30, 30, SUSTAIN_INDEFINITELY);
+ 		}
++		else if( testTintStatus(TINT_STATUS_UM_PROTECTED) )
++		{
++			if (m_colorTintEnvelope == NULL)
++				m_colorTintEnvelope = newInstance(TintEnvelope);
++			m_colorTintEnvelope->play( isKindOf( KINDOF_INFANTRY) ? &UM_PROTECTED_COLOR_INFANTRY : &UM_PROTECTED_COLOR, 25, 25, SUSTAIN_INDEFINITELY);
++		}
+ 		else if( testTintStatus(TINT_STATUS_GAINING_SUBDUAL_DAMAGE) )
+ 		{
+ 			// Disabled has precendence, so it goes first
 diff -ruN a/GameEngine/Source/GameClient/GUI/AnimateWindowManager.cpp b/GameEngine/Source/GameClient/GUI/AnimateWindowManager.cpp
 --- a/GameEngine/Source/GameClient/GUI/AnimateWindowManager.cpp	2026-10-13 16:49:45.013304747 +0100
 +++ b/GameEngine/Source/GameClient/GUI/AnimateWindowManager.cpp	2026-10-13 19:48:42.883276068 +0100
@@ -3482,6 +3574,17 @@ diff -ruN a/GameEngine/Source/GameClient/GameClient.cpp b/GameEngine/Source/Game
  	{
  		TheDisplay->preloadModelAssets(debrisModelNamesGlobalHack[i]);
  	}
+diff -ruN a/GameEngine/Source/GameClient/InGameUI.cpp b/GameEngine/Source/GameClient/InGameUI.cpp
+--- a/GameEngine/Source/GameClient/InGameUI.cpp	2026-10-13 16:49:45.029304937 +0100
++++ b/GameEngine/Source/GameClient/InGameUI.cpp	2026-10-15 20:33:03.767082293 +0100
+@@ -3449,6 +3449,7 @@
+ //-------------------------------------------------------------------------------------------------
+ void InGameUI::postDraw( void )
+ {
++	{ extern void UmDrawRentHud(void); UmDrawRentHud(); }   // Living World: rent countdown and spawn protection
+ 
+ 	// render our display strings for the messages if on
+ 	if( m_messagesOn )
 diff -ruN a/GameEngine/Source/GameClient/Input/Keyboard.cpp b/GameEngine/Source/GameClient/Input/Keyboard.cpp
 --- a/GameEngine/Source/GameClient/Input/Keyboard.cpp	2026-10-13 16:49:45.029304937 +0100
 +++ b/GameEngine/Source/GameClient/Input/Keyboard.cpp	2026-10-13 19:48:07.950133997 +0100
@@ -4115,6 +4218,21 @@ diff -ruN a/GameEngine/Source/GameLogic/Object/Behavior/SlowDeathBehavior.cpp b/
  	{
  		SlowDeathBehaviorInterface* sdu = (*update)->getSlowDeathBehaviorInterface();
  		if (sdu != NULL && sdu->isDieApplicable(damageInfo))
+diff -ruN a/GameEngine/Source/GameLogic/Object/Body/ActiveBody.cpp b/GameEngine/Source/GameLogic/Object/Body/ActiveBody.cpp
+--- a/GameEngine/Source/GameLogic/Object/Body/ActiveBody.cpp	2026-10-13 16:49:45.041305077 +0100
++++ b/GameEngine/Source/GameLogic/Object/Body/ActiveBody.cpp	2026-10-15 20:31:18.535945351 +0100
+@@ -353,6 +353,11 @@
+ 	if ( m_indestructible )
+ 		return;
+ 
++	// Living World spawn protection: a protected player's objects take no damage
++	if ( Player *umOwner = getObject()->getControllingPlayer() )
++		if ( umOwner->umIsImmune() )
++			return;
++
+ 	// initialize these, just in case we bail out early
+ 	damageInfo->out.m_actualDamageDealt = 0.0f;
+ 	damageInfo->out.m_actualDamageClipped = 0.0f;
 diff -ruN a/GameEngine/Source/GameLogic/Object/Body/UndeadBody.cpp b/GameEngine/Source/GameLogic/Object/Body/UndeadBody.cpp
 --- a/GameEngine/Source/GameLogic/Object/Body/UndeadBody.cpp	2026-10-13 16:49:45.041305077 +0100
 +++ b/GameEngine/Source/GameLogic/Object/Body/UndeadBody.cpp	2026-10-13 19:15:08.212407541 +0100
@@ -4932,7 +5050,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/Damage.cpp b/GameEngine/Source/Ga
  	"CRUSH",					
 diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source/GameLogic/System/GameLogic.cpp
 --- a/GameEngine/Source/GameLogic/System/GameLogic.cpp	2026-10-13 16:49:45.069305412 +0100
-+++ b/GameEngine/Source/GameLogic/System/GameLogic.cpp	2026-10-14 23:24:44.774287646 +0100
++++ b/GameEngine/Source/GameLogic/System/GameLogic.cpp	2026-10-15 20:32:23.375948335 +0100
 @@ -83,6 +83,7 @@
  #include "GameLogic/CrateSystem.h"
  #include "GameLogic/FPUControl.h"
@@ -4951,7 +5069,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  	switch (m_gameMode) 
  	{
  	case GAME_SHELL:
-@@ -677,6 +681,112 @@
+@@ -677,6 +681,124 @@
  	}
  }
  
@@ -5005,12 +5123,24 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
 +{
 +	Player *player = umPlayerForSlot(slotNum); if (!player) return;
 +	player->umSetPending(TRUE);
++	player->umSetImmuneUntil(0);
 +	DEBUG_LOG(("UmUnbindPlayer: slot %d freed at frame %u\n", slotNum, TheGameLogic->getFrame()));
++}
++void UmSetImmune(Int slotNum, Int untilFrame)
++{
++	Player *player = umPlayerForSlot(slotNum); if (!player) return;
++	player->umSetImmuneUntil((UnsignedInt)untilFrame);
 +}
 +void UmCharge(Int slotNum, Int amount)
 +{
 +	Player *player = umPlayerForSlot(slotNum); if (!player || amount <= 0) return;
-+	if (player->getMoney()->countMoney() >= (UnsignedInt)amount) player->getMoney()->withdraw((UnsignedInt)amount, FALSE);
++	if (player->getMoney()->countMoney() >= (UnsignedInt)amount)
++	{
++		// the local player hears the "money withdrawn" sound when rent is paid (not while a joining client replays old payments)
++		extern bool UmNetCatchUp(unsigned *frame, unsigned *live);
++		unsigned cf = 0, cl = 0;
++		player->getMoney()->withdraw((UnsignedInt)amount, UmNetCatchUp(&cf, &cl) ? FALSE : TRUE);
++	}
 +}
 +// Unpaid rent hurts in order: first every attack-capable unit the player has; once none is left, the buildings (except command centers);
 +// then dozers/workers and any other non-attacking units; the command center goes last. permille is the share of maximum health taken per call.
@@ -5064,7 +5194,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  // ------------------------------------------------------------------------------------------------
  // ------------------------------------------------------------------------------------------------
  static void checkForDuplicateColors( GameInfo *game )
-@@ -774,7 +884,7 @@
+@@ -774,7 +896,7 @@
  			playerTemplateIdx = GameLogicRandomValue(0, ThePlayerTemplateStore->getPlayerTemplateCount()-1);
  #endif
  			const PlayerTemplate* pt = ThePlayerTemplateStore->getNthPlayerTemplate(playerTemplateIdx);
@@ -5073,7 +5203,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  			{
  #ifdef MORE_RANDOM
  				DEBUG_CRASH(("should not be possible"));
-@@ -792,10 +902,11 @@
+@@ -792,10 +914,11 @@
  		if (colorIdx < 0 || colorIdx >= TheMultiplayerSettings->getNumColors())
  		{
  			DEBUG_ASSERTCRASH(colorIdx == -1, ("Non-random bad color %d in slot %d\n", colorIdx, i));
@@ -5086,7 +5216,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  					colorIdx = -1;
  			}
  			DEBUG_LOG(("Setting color %d to %d\n", i, colorIdx));
-@@ -817,6 +928,10 @@
+@@ -817,6 +940,10 @@
    DEBUG_ASSERTCRASH( md , ("Could not find map %s in the mapcache", game->getMap().str()));
  	if (md)
  		numPlayers = md->m_numPlayers;
@@ -5097,7 +5227,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  
  	// generate a map of start spot distances
  	Real startSpotDistance[MAX_SLOTS][MAX_SLOTS];
-@@ -1178,7 +1293,7 @@
+@@ -1178,7 +1305,7 @@
  	GameInfo *game = NULL;
  	TheGameInfo = NULL;
  	Int localSlot = 0;
@@ -5106,7 +5236,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  	{
  		if (TheLAN)
  		{
-@@ -1993,6 +2108,9 @@
+@@ -1993,6 +2120,9 @@
  
  
  
@@ -5116,7 +5246,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  				placeNetworkBuildingsForPlayer(i, slot, player, pt);
  			}
  
-@@ -2092,7 +2210,12 @@
+@@ -2092,7 +2222,12 @@
  
  	// final step, run newMap for all players
  	if( loadingSaveGame == FALSE )
@@ -5129,7 +5259,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  
  	if ( isChallengeCampaign )
  	{
-@@ -3650,6 +3773,9 @@
+@@ -3650,6 +3785,9 @@
  	// would be getting the CRC anyway, so replays can get the CRCs from the exact instant in time as the original.
  	Bool isMPGameOrReplay = (TheRecorder && TheRecorder->isMultiplayer() && getGameMode() != GAME_SHELL && getGameMode() != GAME_NONE);
  	Bool isSoloGameOrReplay = (TheRecorder && !TheRecorder->isMultiplayer() && getGameMode() != GAME_SHELL && getGameMode() != GAME_NONE);
@@ -5139,7 +5269,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  	Bool generateForMP = (isMPGameOrReplay && (m_frame % TheGameInfo->getCRCInterval()) == 0);
  #if defined(_DEBUG) || defined(_INTERNAL)
  	Bool generateForSolo = isSoloGameOrReplay && ((m_frame && (m_frame%100 == 0)) ||
-@@ -4691,13 +4817,22 @@
+@@ -4691,13 +4829,22 @@
  {
    
  	// version
@@ -5163,7 +5293,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  	//
  	// note that we do not do the id counter here, we did it in the game state block because
  	// it's important to do that part very early in the load process
-@@ -4808,6 +4943,15 @@
+@@ -4808,6 +4955,15 @@
  
  		}  // end for, i
  
@@ -5181,7 +5311,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  	// campaign info
 diff -ruN a/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp b/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp
 --- a/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp	2026-10-13 16:49:45.069305412 +0100
-+++ b/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp	2026-10-14 20:34:22.044464822 +0100
++++ b/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp	2026-10-15 20:31:18.535945351 +0100
 @@ -435,7 +435,7 @@
  					maxFPS = TheGlobalData->m_framesPerSecondLimit;
  				DEBUG_LOG(("Setting max FPS limit to %d FPS\n", maxFPS));
@@ -5191,7 +5321,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp b/GameEngin
  			}
  
  			// prepare for new game
-@@ -624,6 +624,45 @@
+@@ -624,6 +624,51 @@
  			break;
  		}
  
@@ -5227,6 +5357,12 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp b/GameEngin
 +			UmRefillSupply(msg->getArgument(0)->integer);
 +			break;
 +		}
++		case GameMessage::MSG_UM_IMMUNE:
++		{
++			extern void UmSetImmune(Int slot, Int untilFrame);
++			UmSetImmune(msg->getArgument(0)->integer, msg->getArgument(1)->integer);
++			break;
++		}
 +		case GameMessage::MSG_UM_RENT_DAMAGE:
 +		{
 +			extern void UmRentDamage(Int slot, Int permille);
@@ -5237,7 +5373,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp b/GameEngin
  		case GameMessage::MSG_ENABLE_RETALIATION_MODE:
  		{
  			//Logically turns on or off retaliation mode for a specified player.
-@@ -1397,6 +1436,9 @@
+@@ -1397,6 +1442,9 @@
  			loc = msg->getArgument( 1 )->location;
  			angle = msg->getArgument( 2 )->real;
  
@@ -5247,7 +5383,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp b/GameEngin
  			if( place == NULL || constructorObject == NULL )
  				break;  //These are not crashes, as the object may have died before this message came in
  
-@@ -1766,7 +1808,7 @@
+@@ -1766,7 +1814,7 @@
  						if (beaconDrawable)
  						{
  							UnicodeString s;
@@ -5256,7 +5392,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp b/GameEngin
  							{
  								s.concat( msg->getArgument(i)->wChar );
  							}
-@@ -1788,7 +1830,7 @@
+@@ -1788,7 +1836,7 @@
  			if (msg->getArgument(0)->boolean)
  			{
  				// transfer control to any living ally

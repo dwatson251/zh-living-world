@@ -29,7 +29,15 @@
 bool gUmServerMode = false;
 
 class UmClientAudio : public NullAudioManager { public: virtual Bool isMusicAlreadyLoaded(void) const { return TRUE; } };
-AudioManager *UmCreateAudio() { return NEW UmClientAudio; }
+AudioManager *UmCreateRealAudio();   // um_audio.cpp: miniaudio playback of the game's sounds and music
+// The dedicated server stays silent; so does a client started with UM_NOSOUND=1 or -noaudio.
+AudioManager *UmCreateAudio()
+{
+	bool silent = getenv("UM_SERVER") || getenv("UM_NOSOUND") || (TheGlobalData && !TheGlobalData->m_audioOn);
+	printf("[um] audio: %s\n", silent ? "silent (server, UM_NOSOUND or audio switched off)" : "starting the sound system"); fflush(stdout);
+	if (silent) return NEW UmClientAudio;
+	return UmCreateRealAudio();
+}
 VideoPlayerInterface *UmCreateVideo() { return NEW NullVideoPlayerInterface; }
 
 // The seat the server gave this client decides which player the UI belongs to: a seat holder controls its base, anyone else watches as the observer.

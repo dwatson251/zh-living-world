@@ -204,3 +204,21 @@ Terrain heights/LOS/cliff come from src/um/um_terrain.* (copied from BaseHeightM
 - Screenshots were not possible while the desktop was locked (the user was away); everything above was verified from logs, CRC checks and file contents.
 - Harness lesson: a leftover server from an earlier run on the same port made later "tests" talk to old binaries. `tools/lw_killall.sh` before every run.
 - The Docker/Linux work (public/docker, docker-image CI job, LW_ env overrides, docs/linux-native-findings.md) came from another session working in this tree at the same time; its open question (large-world divergence) is the counter overflow above.
+
+## Sound, rent panel and spawn protection (2026-10-15)
+- **Sound**: the client's audio manager was a no-op (NullAudioManager; the retail Miles Sound System is proprietary and not in EA's source). `src/client/um_audio.cpp` is a new AudioManager that reads sounds, speech and music out of the
+  game's archives through TheFileSystem and plays them with miniaudio (`src/audio/`, vendored header fetched into `deps/miniaudio-0.11.22`, built as plain C by its own CMake target). It follows MilesAudioManager's request, limit, loop,
+  attack/sound/decay and volume rules; 3D sounds get distance volume and pan from the listener. The server, `UM_NOSOUND=1` and `-noaudio` stay silent. Verified: device opens, music (Game_USA_01) advances, hundreds of effects start.
+  `UM_AUDIO_TRACE=1` logs the busiest events. Ambient loops that are culled by volume are restarted by their drawables (same as retail), so the "sounds started" counter is large.
+- **Rent panel** (`src/client/um_hud.cpp`, drawn from InGameUI::postDraw): bottom left above the control bar (follows the bar when lowered/hidden; `UM_TEST_BAR=1` cycles the stages for testing), 18 px text, border sized from the text.
+  Rows: PROTECTED (bar + time), RENT (amount, countdown bar, "(grace)" while free), UNPAID RENT xN. The server sends the numbers in a new message T_RENT every 15 frames; paying plays the money-withdraw sound for the local player
+  (UmCharge now withdraws with sound unless the client is still catching up). UM_VERSION is 4 (old clients are refused instead of desyncing).
+- **Rent grace**: `rent_grace_cycles` (UM_RENT_GRACE, default 1) free full cycles; the first payment is due at (grace+1) cycles after binding.
+- **Spawn protection**: `immunity_secs` (default 180, 0 = off; UM_IMMUNE_FRAMES) granted when a player binds or returns, not renewed until `immunity_cooldown_secs` (default 900) after it ended. Server command MSG_UM_IMMUNE sets
+  `Player::m_umImmuneUntil` (xfer version 10, so it survives epochs). While protected: ActiveBody::attemptDamage ignores damage to the player's objects; `Player::getRelationship` reports NEUTRAL instead of ENEMIES for computer players
+  looking at the protected player's teams; Drawable tints everything the player owns red-gold (TINT_STATUS_UM_PROTECTED). Checked: 0 CRC mismatches across 7 epochs while protected.
+- Not checked: that AI units already in combat disengage (relationship change only; damage is blocked regardless); capturing/hijacking a protected unit is not blocked.
+### Assumptions for review
+- Protection defaults: 3 minutes, 15 minute cooldown against reconnect abuse. Grace default stays at 1 cycle = the old "first interval free" behaviour.
+- The panel uses the Arial font at 18 px (scaled with the resolution like other in-game text).
+- Rent-paid sound is the stock "MoneyWithdrawSound".
