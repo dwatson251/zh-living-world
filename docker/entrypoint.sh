@@ -26,7 +26,7 @@ for e in "$GAME"/*; do ln -s "$e" "$RUN/$(basename "$e")"; done
 shopt -u dotglob nullglob
 
 export LW_GAME_DIR='Z:'"$(echo "$RUN" | tr / '\\')" LW_WORLD_DIR='Z:'"$(echo "$WORLD" | tr / '\\')"
-export WINEPREFIX=${WINEPREFIX:-/data/world/.wineprefix} WINEDEBUG=${WINEDEBUG:--all}
+export WINEPREFIX=${WINEPREFIX:-/data/world/.wineprefix} WINEDEBUG=${WINEDEBUG:--all} WINEDLLOVERRIDES="mscoree,mshtml="
 unset WAYLAND_DISPLAY
 # Wine needs some display to create its desktop window, even for a headless server: use a virtual one
 export DISPLAY=:99

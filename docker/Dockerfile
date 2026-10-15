@@ -10,10 +10,11 @@ RUN curl -fsSL -o /wine.tar.xz "https://github.com/Kron4ek/Wine-Builds/releases/
  && echo "${WINE_SHA256}  /wine.tar.xz" | sha256sum -c - && mkdir /opt/wine && tar -xf /wine.tar.xz -C /opt/wine --strip-components=1
 
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl tini xvfb xauth libfreetype6 libx11-6 libxext6 libxcursor1 libxrandr2 libxi6 libxrender1 libxfixes3 libxcomposite1 libxinerama1 \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl tini xvfb xauth libfreetype6 libx11-6 libxext6 libxcursor1 libxrandr2 libxi6 libxrender1 libxfixes3 libxcomposite1 libxinerama1 libfontconfig1 fonts-liberation libudev1 libusb-1.0-0 libxkbcommon0 libxkbregistry0 libwayland-client0 libwayland-egl1 libpulse0 libasound2 libglib2.0-0 libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 libpcsclite1 libpcap0.8 libgphoto2-6 libsane1 ocl-icd-libopencl1 libcapi20-3 \
  && rm -rf /var/lib/apt/lists/* && useradd -u 1000 -m lw
 COPY --from=wine /opt/wine /opt/wine
-ENV PATH=/opt/wine/bin:$PATH WINEPREFIX=/data/world/.wineprefix WINEDEBUG=-all
+# no Mono/Gecko: wineboot would open an installer dialog and try to download them
+ENV PATH=/opt/wine/bin:$PATH WINEPREFIX=/data/world/.wineprefix WINEDEBUG=-all WINEDLLOVERRIDES="mscoree,mshtml="
 COPY LivingWorld/zh_host.exe LivingWorld/zh_client.exe LivingWorld/um_server.ini /opt/livingworld/
 COPY docker/entrypoint.sh docker/healthcheck.sh /usr/local/bin/
 RUN mkdir -p /data/world /data/zerohour /data/config && chown -R lw:lw /data
