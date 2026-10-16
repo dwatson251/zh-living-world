@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <unwind.h>
 #include <string.h>
+#include <psapi.h>
 
 // Diagnostic files go to a "logs" folder next to zh_client.exe (the mod's own folder, not the Zero Hour folder the game runs in); UM_DIAG_DIR overrides it.
 // When that cannot be written either, %TEMP%\\LivingWorld is used, and as a last resort the working directory.
@@ -32,6 +33,54 @@ const char *UmDiagPath(const char *leaf)
 		}
 	}
 	wsprintfA(o, "%s%s", gDiagDir, leaf); return o;
+}
+
+
+// ---- memory: a big city world needs ~1.8 GB; running out must leave a trace ----
+// One line of numbers about the process and the machine (plain Win32, no allocation, safe to call when memory is exhausted).
+void UmMemLine(char *out, int n)
+{
+	PROCESS_MEMORY_COUNTERS_EX pmc; memset(&pmc, 0, sizeof pmc); pmc.cb = sizeof pmc;
+	GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS *)&pmc, sizeof pmc);
+	MEMORYSTATUSEX ms; memset(&ms, 0, sizeof ms); ms.dwLength = sizeof ms; GlobalMemoryStatusEx(&ms);
+	wsprintfA(out, "process: %lu MB in use (peak %lu), %lu MB committed; address space free %lu MB of %lu; machine: %lu MB RAM free of %lu, %lu MB commit free of %lu",
+		(unsigned long)(pmc.WorkingSetSize >> 20), (unsigned long)(pmc.PeakWorkingSetSize >> 20), (unsigned long)(pmc.PrivateUsage >> 20),
+		(unsigned long)(ms.ullAvailVirtual >> 20), (unsigned long)(ms.ullTotalVirtual >> 20),
+		(unsigned long)(ms.ullAvailPhys >> 20), (unsigned long)(ms.ullTotalPhys >> 20), (unsigned long)(ms.ullAvailPageFile >> 20), (unsigned long)(ms.ullTotalPageFile >> 20));
+}
+static void diagAppend(const char *leaf, const char *text)
+{
+	HANDLE h = CreateFileA(UmDiagPath(leaf), FILE_APPEND_DATA, FILE_SHARE_READ, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (h == INVALID_HANDLE_VALUE) return;
+	DWORD w; WriteFile(h, text, lstrlenA(text), &w, NULL); CloseHandle(h);
+}
+// the engine's allocator calls this just before it throws ERROR_OUT_OF_MEMORY
+void UmOutOfMemory(int bytes)
+{
+	static volatile LONG once = 0; if (InterlockedExchange(&once, 1)) return;
+	char line[600], msg[760]; UmMemLine(line, sizeof line);
+	wsprintfA(msg, "OUT OF MEMORY: the game asked for %d bytes and Windows said no. %s\r\n", bytes, line);
+	diagAppend("um_client_trace.txt", msg); diagAppend("um_client_mem.txt", msg);
+}
+// the engine's own fatal-error path (ReleaseCrash): record the reason and the memory state, then tell the player
+void UmShowFatal(const char *reason)
+{
+	char mem[600], msg[1700]; UmMemLine(mem, sizeof mem);
+	wsprintfA(msg, "ReleaseCrash: %s | %s\r\n", reason ? reason : "(no reason)", mem);
+	diagAppend("um_client_trace.txt", msg);
+	wsprintfA(msg, "Living World hit a serious error and has to close.\n\nReason: %s\n\nMemory: %s\n\nPlease send the files in %s (um_client_log.txt, um_client_trace.txt, um_client_mem.txt) and ReleaseCrashInfo.txt from your Command and Conquer Generals Zero Hour Data folder (in Documents).",
+		reason ? reason : "(none)", mem, gDiagDir[0] == '.' ? "the game's folder" : gDiagDir);
+	if (getenv("UM_SERVER") || getenv("UM_NO_DIALOG")) return;   // an unattended server must not wait for a click
+	MessageBoxA(NULL, msg, "Living World", MB_OK | MB_ICONERROR | MB_SYSTEMMODAL | MB_SETFOREGROUND);
+}
+// the last known memory figures survive a hard kill: rewrite a one-line file every few seconds
+static void diagMemTick(void)
+{
+	static DWORD t0 = GetTickCount(); char line[600], msg[700]; UmMemLine(line, sizeof line);
+	wsprintfA(msg, "t+%lu s  %s\r\n", (unsigned long)((GetTickCount() - t0) / 1000), line);
+	HANDLE h = CreateFileA(UmDiagPath("um_client_mem.txt"), GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (h == INVALID_HANDLE_VALUE) return;
+	DWORD w; WriteFile(h, msg, lstrlenA(msg), &w, NULL); CloseHandle(h);
 }
 
 static void diagWrite(const char *what, int code)
@@ -79,9 +128,9 @@ static LONG WINAPI diagCrash(EXCEPTION_POINTERS *ep)
 static LONG WINAPI diagUnhandled(EXCEPTION_POINTERS *ep)
 {
 	diagCrash(ep);
-	char msg[700];
-	wsprintfA(msg, "Living World crashed.\n\nError %08lX at %08lX (game base %08lX).\n\nThe game will close. Please send um_client_crash.bin and um_client_log.txt from:\n%s\nso it can be investigated.",
-		(unsigned long)ep->ExceptionRecord->ExceptionCode, (unsigned long)ep->ExceptionRecord->ExceptionAddress, (unsigned long)GetModuleHandleA(NULL), gDiagDir[0] == '.' ? "the game's folder" : gDiagDir);
+	char msg[1100], mem[600]; UmMemLine(mem, sizeof mem);
+	wsprintfA(msg, "Living World crashed.\n\nError %08lX at %08lX (game base %08lX).\n\nThe game will close. Please send um_client_crash.bin and um_client_log.txt from:\n%s\nso it can be investigated.\n\nMemory: %s",
+		(unsigned long)ep->ExceptionRecord->ExceptionCode, (unsigned long)ep->ExceptionRecord->ExceptionAddress, (unsigned long)GetModuleHandleA(NULL), gDiagDir[0] == '.' ? "the game's folder" : gDiagDir, mem);
 	MessageBoxA(NULL, msg, "Living World", MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);
 	return EXCEPTION_EXECUTE_HANDLER;
 }
@@ -114,6 +163,7 @@ static DWORD WINAPI hangWatch(LPVOID)
 	for (;;)
 	{
 		Sleep(2000);
+		{ static int memTicks = 0; if ((memTicks++ & 1) == 0) diagMemTick(); }
 		LONG now = gBeat;
 		static const bool sampling = getenv("UM_SAMPLE") != NULL; static int sampleNo = 0;   // profiling aid: record the main thread's stack every 2 s (um_client_sample_N.bin)
 		if (!sampling) {

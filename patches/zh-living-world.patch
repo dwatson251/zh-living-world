@@ -2830,7 +2830,7 @@ diff -ruN a/GameEngine/Source/Common/Recorder.cpp b/GameEngine/Source/Common/Rec
  	reset();
 diff -ruN a/GameEngine/Source/Common/System/Debug.cpp b/GameEngine/Source/Common/System/Debug.cpp
 --- a/GameEngine/Source/Common/System/Debug.cpp	2026-10-13 16:49:45.005304649 +0100
-+++ b/GameEngine/Source/Common/System/Debug.cpp	2026-10-15 21:26:05.857976058 +0100
++++ b/GameEngine/Source/Common/System/Debug.cpp	2026-10-16 13:42:47.578621756 +0100
 @@ -43,7 +43,8 @@
  // ----------------------------------------------------------------------------
  
@@ -2879,7 +2879,18 @@ diff -ruN a/GameEngine/Source/Common/System/Debug.cpp b/GameEngine/Source/Common
  			break;
  		case IDRETRY:
  #ifdef DEBUG_LOGGING
-@@ -718,7 +734,7 @@
+@@ -711,14 +727,18 @@
+ //	::MessageBox(NULL, "You have encountered a serious error.  Serious errors can be caused by many things including viruses, overheated hardware and hardware that does not meet the minimum specifications for the game. Please visit the forums at www.generals.ea.com for suggested courses of action or consult your manual for Technical Support contact information.", "Technical Difficulties...", MB_OK|MB_TASKMODAL|MB_ICONERROR);
+ 
+ // crash error message changed again 8/22/03 M Lorenzen... made this message box modal to the system so it will appear on top of any task-modal windows, splash-screen, etc.
++#ifdef UM_LW
++  { extern void UmShowFatal(const char *reason); UmShowFatal(reason); }   // Living World: say what and where, with memory figures, and keep it in the logs folder
++#else
+   ::MessageBox(NULL, "You have encountered a serious error.  Serious errors can be caused by many things including viruses, overheated hardware and hardware that does not meet the minimum specifications for the game. Please visit the forums at www.generals.ea.com for suggested courses of action or consult your manual for Technical Support contact information.", 
+    "Technical Difficulties...", 
+    MB_OK|MB_SYSTEMMODAL|MB_ICONERROR);
++#endif
+ 
  
  #endif
  
@@ -2888,7 +2899,7 @@ diff -ruN a/GameEngine/Source/Common/System/Debug.cpp b/GameEngine/Source/Common
  }  
  
  void ReleaseCrashLocalized(const AsciiString& p, const AsciiString& m)
-@@ -784,5 +800,5 @@
+@@ -784,5 +804,5 @@
  		theReleaseCrashLogFile = NULL;
  	}
  
@@ -2909,8 +2920,21 @@ diff -ruN a/GameEngine/Source/Common/System/DisabledTypes.cpp b/GameEngine/Sourc
  	"DISABLED_HACKED",
 diff -ruN a/GameEngine/Source/Common/System/GameMemory.cpp b/GameEngine/Source/Common/System/GameMemory.cpp
 --- a/GameEngine/Source/Common/System/GameMemory.cpp	2026-10-13 16:49:45.005304649 +0100
-+++ b/GameEngine/Source/Common/System/GameMemory.cpp	2026-10-14 00:00:59.427549891 +0100
-@@ -1559,7 +1559,7 @@
++++ b/GameEngine/Source/Common/System/GameMemory.cpp	2026-10-16 13:40:33.300401716 +0100
+@@ -239,7 +239,12 @@
+ {
+ 	void* p = ::GlobalAlloc(GMEM_FIXED, numBytes);
+ 	if (!p)
++	{
++#ifdef UM_LW
++		extern void UmOutOfMemory(int bytes); UmOutOfMemory(numBytes);   // Living World: leave a trace (the catch in WinMain used to swallow this silently)
++#endif
+ 		throw ERROR_OUT_OF_MEMORY;
++	}
+ #ifdef MEMORYPOOL_DEBUG
+ 	{
+ 		USE_PERF_TIMER(MemoryPoolDebugging)
+@@ -1559,7 +1564,7 @@
  {
  	DEBUG_ASSERTCRASH(allocationCount > 0 && allocationCount%MEM_BOUND_ALIGNMENT==0, ("bad allocationCount (must be >0 and evenly divisible by %d)",MEM_BOUND_ALIGNMENT));
  
@@ -2919,7 +2943,7 @@ diff -ruN a/GameEngine/Source/Common/System/GameMemory.cpp b/GameEngine/Source/C
  
  	blob->initBlob(this, allocationCount);	// will throw on failure
  
-@@ -1627,6 +1627,12 @@
+@@ -1627,6 +1632,12 @@
  	out the block. if unable to allocate, throw ERROR_OUT_OF_MEMORY. this
  	function will never return null.
  */
@@ -2932,7 +2956,7 @@ diff -ruN a/GameEngine/Source/Common/System/GameMemory.cpp b/GameEngine/Source/C
  void* MemoryPool::allocateBlockDoNotZeroImplementation(DECLARE_LITERALSTRING_ARG1)
  {
  	ScopedCriticalSection scopedCriticalSection(TheMemoryPoolCriticalSection);
-@@ -1635,7 +1641,7 @@
+@@ -1635,7 +1646,7 @@
  	{
  		// hmm... the current 'free' blob has nothing available. look and see if there
  		// are any other existing blobs with freespace.
@@ -2941,7 +2965,7 @@ diff -ruN a/GameEngine/Source/Common/System/GameMemory.cpp b/GameEngine/Source/C
  		{
  			if (blob->hasAnyFreeBlocks())
  			 	break;
-@@ -1688,6 +1694,7 @@
+@@ -1688,6 +1699,7 @@
  	#endif
  #endif
  
@@ -2949,7 +2973,7 @@ diff -ruN a/GameEngine/Source/Common/System/GameMemory.cpp b/GameEngine/Source/C
  	return block->getUserData();
  }
  
-@@ -2203,6 +2210,7 @@
+@@ -2203,6 +2215,7 @@
  #endif
  
  		result = block->getUserData();
@@ -2957,7 +2981,7 @@ diff -ruN a/GameEngine/Source/Common/System/GameMemory.cpp b/GameEngine/Source/C
  
  #ifdef MEMORYPOOL_DEBUG
  		m_factory->adjustTotals(debugLiteralTagString, numBytes, numBytes);
-@@ -2660,7 +2668,7 @@
+@@ -2660,7 +2673,7 @@
  		throw ERROR_OUT_OF_MEMORY;
  	}
  
@@ -2966,7 +2990,7 @@ diff -ruN a/GameEngine/Source/Common/System/GameMemory.cpp b/GameEngine/Source/C
  	pool->init(this, poolName, allocationSize, initialAllocationCount, overflowAllocationCount);	// will throw on failure
  
  	pool->addToList(&m_firstPoolInFactory);
-@@ -2715,7 +2723,7 @@
+@@ -2715,7 +2728,7 @@
  {
  	DynamicMemoryAllocator *dma;
  
@@ -2975,7 +2999,7 @@ diff -ruN a/GameEngine/Source/Common/System/GameMemory.cpp b/GameEngine/Source/C
  	dma->init(this, numSubPools, pParms);	// will throw on failure
  
  	dma->addToList(&m_firstDmaInFactory);
-@@ -3422,7 +3430,7 @@
+@@ -3422,7 +3435,7 @@
  		Int numSubPools;
  		const PoolInitRec *pParms;
  		userMemoryManagerGetDmaParms(&numSubPools, &pParms);
@@ -2984,7 +3008,7 @@ diff -ruN a/GameEngine/Source/Common/System/GameMemory.cpp b/GameEngine/Source/C
  		TheMemoryPoolFactory->init();	// will throw on failure
  		TheDynamicMemoryAllocator = TheMemoryPoolFactory->createDynamicMemoryAllocator(numSubPools, pParms);	// will throw on failure
  		userMemoryManagerInitPools();
-@@ -3450,8 +3458,8 @@
+@@ -3450,8 +3463,8 @@
  	linktest = new char[8];
  	delete [] linktest;
  
@@ -2995,7 +3019,7 @@ diff -ruN a/GameEngine/Source/Common/System/GameMemory.cpp b/GameEngine/Source/C
  
  #ifdef MEMORYPOOL_OVERRIDE_MALLOC
  	linktest = (char*)malloc(1);
-@@ -3464,7 +3472,7 @@
+@@ -3464,7 +3477,7 @@
  #ifdef MEMORYPOOL_OVERRIDE_MALLOC
  	if (theLinkTester != 10)
  #else
@@ -3004,7 +3028,7 @@ diff -ruN a/GameEngine/Source/Common/System/GameMemory.cpp b/GameEngine/Source/C
  #endif
  	{
  		DEBUG_CRASH(("Wrong operator new/delete linked in! Fix this...\n"));
-@@ -3497,7 +3505,7 @@
+@@ -3497,7 +3510,7 @@
  		Int numSubPools;
  		const PoolInitRec *pParms;
  		userMemoryManagerGetDmaParms(&numSubPools, &pParms);
@@ -5742,7 +5766,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/Damage.cpp b/GameEngine/Source/Ga
  	"CRUSH",					
 diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source/GameLogic/System/GameLogic.cpp
 --- a/GameEngine/Source/GameLogic/System/GameLogic.cpp	2026-10-13 16:49:45.069305412 +0100
-+++ b/GameEngine/Source/GameLogic/System/GameLogic.cpp	2026-10-15 22:40:01.479716781 +0100
++++ b/GameEngine/Source/GameLogic/System/GameLogic.cpp	2026-10-16 13:33:55.199283420 +0100
 @@ -83,6 +83,7 @@
  #include "GameLogic/CrateSystem.h"
  #include "GameLogic/FPUControl.h"
@@ -5924,7 +5948,17 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  
  	// generate a map of start spot distances
  	Real startSpotDistance[MAX_SLOTS][MAX_SLOTS];
-@@ -1101,6 +1233,25 @@
+@@ -1079,6 +1211,9 @@
+ 	
+ 	if( m_loadScreen )
+ 		m_loadScreen->update( progress );
++#ifdef UM_LW
++	{ extern void UmLoadTick(const char *what, int pct); static int step = 0; char b[64]; sprintf(b, "Loading the world, step %d", ++step); UmLoadTick(b, -1); }
++#endif
+ 
+ }  // end updateLoadProgress
+ 
+@@ -1101,6 +1236,25 @@
  // ------------------------------------------------------------------------------------------------
  /** Entry point for starting a new game, the engine is already in clean state at this
  	* point and ready to load up with all the data */
@@ -5950,7 +5984,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  // ------------------------------------------------------------------------------------------------
  void GameLogic::startNewGame( Bool loadingSaveGame )
  {
-@@ -1178,7 +1329,7 @@
+@@ -1178,7 +1332,7 @@
  	GameInfo *game = NULL;
  	TheGameInfo = NULL;
  	Int localSlot = 0;
@@ -5959,7 +5993,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  	{
  		if (TheLAN)
  		{
-@@ -1540,7 +1691,7 @@
+@@ -1540,7 +1694,7 @@
  				if (count)
  				{
  					ScriptList *pSL = TheSidesList->getSideInfo(0)->getScriptList();
@@ -5968,7 +6002,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  					while (next)
  					{
  						Script *dupe = next->duplicate();
-@@ -1794,6 +1945,9 @@
+@@ -1794,6 +1948,9 @@
  			Coord3D pos = *pMapObj->getLocation();
  			pos.z += TheTerrainLogic->getGroundHeight( pos.x, pos.y );
  			Real angle = normalizeAngle(pMapObj->getAngle());
@@ -5978,7 +6012,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  			if (thingTemplate->isKindOf(KINDOF_OPTIMIZED_TREE)) {
  				// Opt trees and props just get drawables to tell the client about it, then deleted. jba [6/5/2003]
  				// This way there is no logic object to slow down partition manager and core logic stuff.				
-@@ -1845,6 +1999,9 @@
+@@ -1845,6 +2002,9 @@
  			Coord3D pos = *pMapObj->getLocation();
  			pos.z += TheTerrainLogic->getGroundHeight( pos.x, pos.y );
  			Real angle = normalizeAngle(pMapObj->getAngle());
@@ -5988,7 +6022,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  			if (thingTemplate->isKindOf(KINDOF_OPTIMIZED_TREE)) {
  				// Opt trees and props just get drawables to tell the client about it, then deleted. jba [6/5/2003]
  				// This way there is no logic object to slow down partition manager and core logic stuff.
-@@ -1993,6 +2150,9 @@
+@@ -1993,6 +2153,9 @@
  
  
  
@@ -5998,7 +6032,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  				placeNetworkBuildingsForPlayer(i, slot, player, pt);
  			}
  
-@@ -2092,7 +2252,12 @@
+@@ -2092,7 +2255,12 @@
  
  	// final step, run newMap for all players
  	if( loadingSaveGame == FALSE )
@@ -6011,7 +6045,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  
  	if ( isChallengeCampaign )
  	{
-@@ -3650,6 +3815,9 @@
+@@ -3650,6 +3818,9 @@
  	// would be getting the CRC anyway, so replays can get the CRCs from the exact instant in time as the original.
  	Bool isMPGameOrReplay = (TheRecorder && TheRecorder->isMultiplayer() && getGameMode() != GAME_SHELL && getGameMode() != GAME_NONE);
  	Bool isSoloGameOrReplay = (TheRecorder && !TheRecorder->isMultiplayer() && getGameMode() != GAME_SHELL && getGameMode() != GAME_NONE);
@@ -6021,7 +6055,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  	Bool generateForMP = (isMPGameOrReplay && (m_frame % TheGameInfo->getCRCInterval()) == 0);
  #if defined(_DEBUG) || defined(_INTERNAL)
  	Bool generateForSolo = isSoloGameOrReplay && ((m_frame && (m_frame%100 == 0)) ||
-@@ -3690,6 +3858,12 @@
+@@ -3690,6 +3861,12 @@
  
  	// process client commands
  	{
@@ -6034,7 +6068,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  		processCommandList( TheCommandList );
  	}
  
-@@ -4691,13 +4865,22 @@
+@@ -4691,13 +4868,22 @@
  {
    
  	// version
@@ -6058,7 +6092,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  	//
  	// note that we do not do the id counter here, we did it in the game state block because
  	// it's important to do that part very early in the load process
-@@ -4808,6 +4991,15 @@
+@@ -4808,6 +4994,15 @@
  
  		}  // end for, i
  
@@ -6837,7 +6871,7 @@ diff -ruN a/GameEngineDevice/Include/Win32Device/Common/Win32GameEngine.h b/Game
  #endif  // end __WIN32GAMEENGINE_H_
 diff -ruN a/GameEngineDevice/Source/W3DDevice/GameClient/BaseHeightMap.cpp b/GameEngineDevice/Source/W3DDevice/GameClient/BaseHeightMap.cpp
 --- a/GameEngineDevice/Source/W3DDevice/GameClient/BaseHeightMap.cpp	2026-10-13 16:49:45.093305697 +0100
-+++ b/GameEngineDevice/Source/W3DDevice/GameClient/BaseHeightMap.cpp	2026-10-16 01:08:23.330441436 +0100
++++ b/GameEngineDevice/Source/W3DDevice/GameClient/BaseHeightMap.cpp	2026-10-16 13:29:22.174129752 +0100
 @@ -1652,6 +1652,9 @@
  water.*/
  void BaseHeightMapRenderObjClass::updateShorelineTiles(Int minX, Int minY, Int maxX, Int maxY, WorldHeightMap *pMap)
@@ -6857,7 +6891,38 @@ diff -ruN a/GameEngineDevice/Source/W3DDevice/GameClient/BaseHeightMap.cpp b/Gam
  	{	Int x = m_shoreLineTilePositions[j].m_xy & 0xffff;
  		Int y = m_shoreLineTilePositions[j].m_xy >> 16;
  		if (x >= minX && x < maxX &&
-@@ -2699,7 +2702,7 @@
+@@ -1695,18 +1698,30 @@
+ 			shoreLineSortInfosXMajor=TRUE;
+ 	}
+ 
++#ifdef UM_LW
++	extern void UmLoadTick(const char *what, int pct);
++#define UM_SHORE_TICK(a, lo, hi) { if (((a) & 15) == 0 && (hi) > (lo)) UmLoadTick("Building the coastline", (Int)(((a) - (lo)) * 100.0f / ((hi) - (lo)))); }
++#else
++#define UM_SHORE_TICK(a, lo, hi)
++#endif
+ 	if (shoreLineSortInfosXMajor)
+ 		for (Int i=minX; i<maxX; i++)
++		{
++			UM_SHORE_TICK(i, minX, maxX)
+ 			for (j=minY; j<maxY; j++)
+ 			{
+ 				updateShorelineTile(i,j,border,pMap);
+ 			}
++		}
+ 	else
+ 		for (j=minY; j<maxY; j++)
++		{
++			UM_SHORE_TICK(j, minY, maxY)
+ 			for (Int i=minX; i<maxX; i++)
+ 			{
+ 				updateShorelineTile(i,j,border,pMap);
+ 			}
++		}
+ 
+ 	recordShoreLineSortInfos();
+ }
+@@ -2699,7 +2714,7 @@
  			//Loop over visible terrain and extract all the tiles that need shoreline blend
  			if (m_shoreLineSortInfosXMajor)	//map is wider than taller.
  			{	
@@ -6866,7 +6931,7 @@ diff -ruN a/GameEngineDevice/Source/W3DDevice/GameClient/BaseHeightMap.cpp b/Gam
  				{	//figure out how many tiles are available in this column
  					shoreLineTileSortInfo *sortInfo=&m_shoreLineSortInfos[x];
  
-@@ -2819,7 +2822,7 @@
+@@ -2819,7 +2834,7 @@
  			}
  			else
  			{
@@ -7073,7 +7138,7 @@ diff -ruN a/GameEngineDevice/Source/W3DDevice/GameClient/W3DAssetManager.cpp b/G
  /*	for (unsigned i=0;i<count;++i) {
 diff -ruN a/GameEngineDevice/Source/W3DDevice/GameClient/W3DDisplay.cpp b/GameEngineDevice/Source/W3DDevice/GameClient/W3DDisplay.cpp
 --- a/GameEngineDevice/Source/W3DDevice/GameClient/W3DDisplay.cpp	2026-10-13 16:49:45.105305840 +0100
-+++ b/GameEngineDevice/Source/W3DDevice/GameClient/W3DDisplay.cpp	2026-10-15 23:22:17.276467364 +0100
++++ b/GameEngineDevice/Source/W3DDevice/GameClient/W3DDisplay.cpp	2026-10-16 13:29:22.174129752 +0100
 @@ -1461,7 +1461,7 @@
  
  			unibuffer.concat( L"\nModelStates: " );
@@ -7116,6 +7181,16 @@ diff -ruN a/GameEngineDevice/Source/W3DDevice/GameClient/W3DDisplay.cpp b/GameEn
  		{
  			//USE_PERF_TIMER(BigAssRenderLoop)
  			static Bool couldRender = true;
+@@ -1977,6 +1987,9 @@
+ 				TheGraphDraw->render();
+ 				TheGraphDraw->clear();
+ #endif
++#ifdef UM_LW
++				{ extern void UmDrawLoadStatus(void); UmDrawLoadStatus(); }   // Living World: what the client is loading right now
++#endif
+ 				// render is all done!
+ 				WW3D::End_Render();	
+ 			}
 diff -ruN a/GameEngineDevice/Source/W3DDevice/GameClient/W3DMouse.cpp b/GameEngineDevice/Source/W3DDevice/GameClient/W3DMouse.cpp
 --- a/GameEngineDevice/Source/W3DDevice/GameClient/W3DMouse.cpp	2026-10-13 16:49:45.105305840 +0100
 +++ b/GameEngineDevice/Source/W3DDevice/GameClient/W3DMouse.cpp	2026-10-14 09:25:16.085558060 +0100

@@ -1071,9 +1071,17 @@ Int APIENTRY WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
 		// BGC - shut down COM
 	//	OleUninitialize();
 	}	
+	catch (int code)
+	{	// the engine throws ERROR_OUT_OF_MEMORY (an int) when an allocation fails: this used to end the program silently
+		void UmMemLine(char *, int); char mem[600], msg[1000]; UmMemLine(mem, sizeof mem);
+		printf("[um] client: ended by exception %d. %s\n", code, mem); fflush(stdout); umTrace("ended by an exception (out of memory?)");
+		wsprintfA(msg, "Living World ran out of memory and has to close (error %d).\n\nBig city worlds need about 2 GB; 64-bit Windows with 8 GB of RAM is recommended. Please close other programs and start again.\n\n%s\n\nDetails are in the logs folder next to zh_client.exe (um_client_log.txt, um_client_mem.txt).", code, mem);
+		MessageBoxA(NULL, msg, "Living World", MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);
+	}
 	catch (...) 
 	{ 
-	
+		printf("[um] client: ended by an unexpected exception\n"); fflush(stdout); umTrace("ended by an unexpected exception");
+		MessageBoxA(NULL, "Living World hit an unexpected error and has to close.\n\nPlease send the files in the logs folder next to zh_client.exe (um_client_log.txt, um_client_trace.txt).", "Living World", MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);
 	}
 
 	TheUnicodeStringCriticalSection = NULL;

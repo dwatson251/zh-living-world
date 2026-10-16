@@ -180,6 +180,7 @@ static void umRestartClient(const char *why)
 }
 static bool umLoadSnapshotFile(const char *leaf)
 {
+	UmLoadStage("Loading the world snapshot");
 	AvailableGameInfo info; info.filename = leaf; info.next = info.prev = NULL; info.saveGameInfo.saveFileType = SAVE_FILE_TYPE_NORMAL;
 	SaveCode rc = SC_OK;
 	try { rc = TheGameState->loadGame(info); } catch (...) { printf("[um] snapshot load threw an exception\n"); return false; }
@@ -213,6 +214,7 @@ static std::vector<bool> gInertSlots;
 bool UmIsInertSlot(int slot) { return slot >= 0 && slot < (int)gInertSlots.size() && gInertSlots[slot]; }
 void UmStartWorld(const UmWorldDesc &w)
 {
+	UmLoadStage("Starting the world");
 	if (TheGameLogic && TheGameLogic->isInGame()) TheGameLogic->clearGameData(FALSE);   // graphical client: leave the shell map first, like the retail skirmish start does
 	gInertSlots.assign(w.slots.size(), false); for (size_t i = 0; i < w.slots.size(); ++i) gInertSlots[i] = !w.slots[i].name.empty() && w.slots[i].name[0] == '~';
 	gProfiles.clear(); for (size_t i = 0; i < w.slots.size(); ++i) UmSetProfile((int)i, w.slots[i].profT - 1, w.slots[i].rgb, w.slots[i].nick);
@@ -301,7 +303,7 @@ public:
 		Wr h; h.u32(UM_MAGIC); h.u32(UM_VERSION); h.str(key);
 		h.str(getenv("UM_NAME") ? getenv("UM_NAME") : ""); h.str(getenv("UM_FACTION") ? getenv("UM_FACTION") : ""); h.u32(getenv("UM_COLOR") ? (unsigned)strtoul(getenv("UM_COLOR"), NULL, 16) : 0);
 		Wr f; frameMsg(f, T_HELLO, h.b); sendAll(m_sock, f.b);
-		printf("[um] client: connected to %s:%d\n", host, port);
+		printf("[um] client: connected to %s:%d\n", host, port); UmLoadStage("Connected, waiting for the world");
 	}
 
 	// --- per-frame bookkeeping, called after the logic has run

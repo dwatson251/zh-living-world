@@ -99,6 +99,8 @@ static void umClientTick()
 	}
 	static int applied = -2;
 	if (gUmServerMode || !TheGameLogic || !TheGameLogic->isInGame() || !ThePlayerList || !TheTacticalView) return;
+	if (getenv("UM_TEST_OOM") && TheGameLogic->getFrame() > 60) { void UmOutOfMemory(int); UmOutOfMemory(12345); throw ERROR_OUT_OF_MEMORY; }   // test hook: behave like a failed allocation
+	if (!TheGameLogic->isInShellGame() && !TheGameLogic->isLoadingMap() && TheGameLogic->getFrame() > 0) UmLoadDone();   // the world is loaded: the retail main menu below goes away and the loading overlay with it
 	if (TheShell && TheShell->isShellActive()) { TheShell->hideShell(); printf("[um] client: retail main menu hidden\n"); }   // joined while the engine was still showing its main menu: the retail path (MSG_NEW_GAME) that would hide it never runs
 	if (TheMouse && !TheMouse->getVisibility()) { TheMouse->setVisibility(TRUE); TheMouse->setCursor(Mouse::ARROW); printf("[um] client: cursor made visible\n"); }   // the retail code only does this when a load screen shows
 	int slot = UmNetMySlot();

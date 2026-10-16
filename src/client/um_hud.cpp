@@ -16,6 +16,9 @@
 #include <stdio.h>
 #include <string>
 #include <wchar.h>
+#include <windows.h>
+#include "GameClient/GameClient.h"
+#include "Common/GameEngine.h"
 
 namespace
 {
@@ -137,4 +140,67 @@ void UmDrawRentHud(void)
 		line(2)->setText(UnicodeString(t));
 		line(2)->draw(x, y, blink ? GameMakeColor(255, 60, 40, 255) : GameMakeColor(255, 140, 120, 255), shadow);
 	}
+}
+
+// ---- the loading overlay: joining a big city world takes minutes on an older PC; say what the client is doing, and log it ----
+// The retail main menu stays up until the world is ready (client_engine.cpp hides it), so the menu itself marks how far a start got.
+namespace
+{
+char gStageText[200] = ""; bool gLoadOn = false; DWORD gLoadT0 = 0, gLastDraw = 0; int gLastLogPct = -10;
+DisplayString *gLoadLine[2] = { NULL, NULL };
+DisplayString *loadLine(int i)
+{
+	if (!gLoadLine[i])
+	{
+		gLoadLine[i] = TheDisplayStringManager->newDisplayString();
+		gLoadLine[i]->setFont(TheFontLibrary->getFont(TheInGameUI->umMessageFontName(), TheGlobalLanguageData->adjustFontSize(TheInGameUI->umMessagePointSize() + 4), TheInGameUI->umMessageBold()));
+	}
+	return gLoadLine[i];
+}
+void loadRedraw(bool force)
+{
+	DWORD n = GetTickCount(); if (!force && n - gLastDraw < 400) return;
+	gLastDraw = n;
+	if (!TheDisplay || !TheGameEngine || !TheInGameUI || !TheDisplayStringManager || !TheFontLibrary || !TheGlobalLanguageData) return;
+	TheGameEngine->serviceWindowsOS();   // keeps Windows from calling the window "not responding" while it loads
+	TheDisplay->draw();
+}
+}
+void UmLoadStage(const char *text)
+{
+	extern bool gUmServerMode; if (gUmServerMode || getenv("UM_SERVER")) return;
+	if (!gLoadOn) { gLoadOn = true; gLoadT0 = GetTickCount(); gLastLogPct = -10; }
+	strncpy(gStageText, text, sizeof gStageText - 1); gStageText[sizeof gStageText - 1] = 0;
+	{ void UmMemLine(char *, int); char mem[600]; UmMemLine(mem, sizeof mem); printf("[um] load: %s (%lu s) | %s\n", gStageText, (unsigned long)((GetTickCount() - gLoadT0) / 1000), mem); fflush(stdout); }
+	loadRedraw(true);
+}
+void UmLoadTick(const char *what, int pct)
+{
+	if (!gLoadOn) return;
+	if (pct >= 0) _snprintf(gStageText, sizeof gStageText - 1, "%s: %d%%", what, pct); else strncpy(gStageText, what, sizeof gStageText - 1);
+	gStageText[sizeof gStageText - 1] = 0;
+	if (pct < 0 || pct >= gLastLogPct + 10 || pct < gLastLogPct) { gLastLogPct = pct; printf("[um] load: %s (%lu s)\n", gStageText, (unsigned long)((GetTickCount() - gLoadT0) / 1000)); fflush(stdout); }
+	loadRedraw(false);
+}
+void UmLoadDone(void)
+{
+	if (!gLoadOn) return;
+	gLoadOn = false; printf("[um] load: world ready after %lu s\n", (unsigned long)((GetTickCount() - gLoadT0) / 1000)); fflush(stdout);
+}
+void UmDrawLoadStatus(void)
+{
+	if (!gLoadOn || !TheDisplay || !TheDisplayStringManager || !TheInGameUI || !TheFontLibrary || !TheGlobalLanguageData) return;
+	unsigned secs = (GetTickCount() - gLoadT0) / 1000;
+	wchar_t t0[300], t1[120]; swprintf(t0, 300, L"LIVING WORLD   %hs   %u:%02u", gStageText, secs / 60, secs % 60);
+	swprintf(t1, 120, L"Big cities can take minutes on older PCs. Keep this window open.");
+	loadLine(0)->setText(UnicodeString(t0)); loadLine(1)->setText(UnicodeString(t1));
+	Int w0 = 0, h0 = 0, w1 = 0, h1 = 0; loadLine(0)->getSize(&w0, &h0); loadLine(1)->getSize(&w1, &h1);
+	const Int W = TheDisplay->getWidth(), H = TheDisplay->getHeight(), pad = 14, pw = (w0 > w1 ? w0 : w1) + 2 * pad, ph = h0 + h1 + 3 * pad;
+	const Int x = (W - pw) / 2, y = H / 2 - ph / 2;
+	TheDisplay->drawFillRect(0, 0, W, H, GameMakeColor(0, 0, 0, 170));   // dim the retail main menu behind (its buttons do nothing in this mod while the world loads)
+	TheDisplay->drawFillRect(x, y, pw, ph, GameMakeColor(0, 0, 0, 200));
+	TheDisplay->drawOpenRect(x, y, pw, ph, 2.0f, GameMakeColor(255, 190, 60, 255));
+	const Color shadow = GameMakeColor(0, 0, 0, 255);
+	loadLine(0)->draw(x + pad, y + pad, GameMakeColor(255, 220, 120, 255), shadow);
+	loadLine(1)->draw(x + pad, y + 2 * pad + h0, GameMakeColor(220, 220, 220, 255), shadow);
 }

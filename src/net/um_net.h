@@ -34,5 +34,6 @@ bool UmNetCatchUp(unsigned *frame, unsigned *live);   // client: true while stil
 struct UmRentInfo { bool valid; unsigned serverFrame, nextRent, interval, immuneUntil, paid, graceEnd; int missed, amount; bool expiring; UmRentInfo() : valid(false), serverFrame(0), nextRent(0), interval(0), immuneUntil(0), paid(0), graceEnd(0), missed(0), amount(0), expiring(false) {} };
 bool UmNetRentInfo(UmRentInfo *out);
 unsigned UmNetSpeed();   // logic frames per second of this world
+void UmLoadStage(const char *text); void UmLoadTick(const char *what, int pct); void UmLoadDone(void); void UmDrawLoadStatus(void);   // the client's loading overlay (um_hud.cpp)
 void UmDrawRentHud(void);   // client: the rent/protection panel (src/client/um_hud.cpp), called from InGameUI::postDraw   // client: the server's latest word on our rent and spawn protection (false until the first message)
 int UmNetMySlot();   // client: the seat the server gave us (-1: watching only)

@@ -118,6 +118,9 @@ public:
 	virtual View *createView(void) { return NEW NullView; }
 };
 
+void UmLoadStage(const char *) {} void UmLoadTick(const char *, int) {} void UmLoadDone(void) {} void UmDrawLoadStatus(void) {}
+void UmOutOfMemory(int) {}
+void UmShowFatal(const char *) {}
 void UmDrawRentHud(void) {}   // the headless build draws nothing
 class UmAudio : public NullAudioManager { public: virtual Bool isMusicAlreadyLoaded(void) const { return TRUE; } };  // no CD prompt
 
