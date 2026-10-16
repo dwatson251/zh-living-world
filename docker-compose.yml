@@ -54,6 +54,17 @@ services:
       LW_RENT_DAMAGE_PERCENT: "${LW_RENT_DAMAGE_PERCENT:-1}" # Damage per unpaid stack (%)
       LW_ABSENT_MINUTES: "${LW_ABSENT_MINUTES:-30}"          # Keep an absent base (minutes)
       LW_COMBAT_SECS: "${LW_COMBAT_SECS:-30}"                # Combat grace period (seconds)
+      # ---- [economy]
+      LW_POOLS: "${LW_POOLS:-1}"                             # Money pools cap generator income (1 = on)
+      LW_POOL_SEED: "${LW_POOL_SEED:-50000}"                 # Pool: starting amount per currency
+      LW_POOL_JOIN: "${LW_POOL_JOIN:-2000}"                  # Pool: added when a player joins
+      LW_POOL_DEPOT_PERCENT: "${LW_POOL_DEPOT_PERCENT:-60}"  # Pool share: supply depots (%)
+      LW_POOL_DERRICK_PERCENT: "${LW_POOL_DERRICK_PERCENT:-10}" # Pool share: oil derricks (%)
+      LW_POOL_OTHER_PERCENT: "${LW_POOL_OTHER_PERCENT:-30}"  # Pool share: Black Market, hackers, supply drops (%)
+      LW_INFLATION: "${LW_INFLATION:-0}"                     # Inflation: prices and rent follow GDP (1 = on)
+      LW_GDP_BASELINE: "${LW_GDP_BASELINE:-200000}"          # Inflation: GDP at which prices start to rise
+      LW_INFLATION_MAX_PERCENT: "${LW_INFLATION_MAX_PERCENT:-300}" # Inflation: highest price level (%)
+      LW_DEFLATION_PERMILLE: "${LW_DEFLATION_PERMILLE:-20}"  # Deflation: pool tax per cycle (per mille)
       # every setting above can also be set in um_server.ini; LW_ variables win over the file
 volumes:
   lw-world:
