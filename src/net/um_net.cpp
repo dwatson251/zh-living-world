@@ -147,7 +147,13 @@ static bool umReadFile(const std::string &path, std::string &out)
 }
 static bool umWriteFile(const std::string &path, const std::string &data)
 {
-	FILE *f = fopen(path.c_str(), "wb"); if (!f) return false; size_t n = fwrite(data.data(), 1, data.size(), f); fclose(f); return n == data.size();
+	// a machine that never ran Zero Hour has no save folder yet (the engine only creates it when it saves a game): make every missing level
+	for (size_t i = 0; i < path.size(); ++i) if ((path[i] == '\\' || path[i] == '/') && i > 2) CreateDirectoryA(path.substr(0, i).c_str(), NULL);
+	FILE *f = fopen(path.c_str(), "wb");
+	if (!f) { printf("[um] could not create %s (error %lu)\n", path.c_str(), (unsigned long)GetLastError()); return false; }
+	size_t n = fwrite(data.data(), 1, data.size(), f); fclose(f);
+	if (n != data.size()) printf("[um] could not write all of %s (%u of %u bytes)\n", path.c_str(), (unsigned)n, (unsigned)data.size());
+	return n == data.size();
 }
 static std::string umZip(const std::string &raw)
 {
@@ -158,7 +164,9 @@ static std::string umZip(const std::string &raw)
 static bool umUnzip(const std::string &z, unsigned rawSize, std::string &raw)
 {
 	raw.assign(rawSize, '\0'); uLongf rl = rawSize;
-	return uncompress((Bytef *)&raw[0], &rl, (const Bytef *)z.data(), (uLong)z.size()) == Z_OK && rl == rawSize;
+	bool ok = uncompress((Bytef *)&raw[0], &rl, (const Bytef *)z.data(), (uLong)z.size()) == Z_OK && rl == rawSize;
+	if (!ok) printf("[um] could not unpack a %u byte compressed block (expected %u bytes)\n", (unsigned)z.size(), rawSize);
+	return ok;
 }
 // A client that cannot load an epoch snapshot cannot stay in step with the world: say so (never restart by itself, a machine that fails once would fail
 // again in a loop) and close, leaving the details in the log.
