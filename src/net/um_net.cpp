@@ -166,7 +166,7 @@ static void umRestartClient(const char *why)
 {
 	printf("[um] client: %s; the game cannot continue\n", why); fflush(stdout);
 	if (getenv("UM_NO_DIALOG")) ExitProcess(1);
-	char msg[600]; sprintf(msg, "Living World could not continue: %s.\n\nThe game will close. Please start it again; if this keeps happening, send um_client_log.txt and DebugLogFile.txt (in the game's folder) so it can be investigated.", why);
+	char msg[600]; sprintf(msg, "Living World could not continue: %s.\n\nThe game will close. Please start it again; if this keeps happening, send the files in the logs folder next to zh_client.exe (um_client_log.txt) so it can be investigated.", why);
 	MessageBoxA(NULL, msg, "Living World", MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);
 	ExitProcess(1);
 }

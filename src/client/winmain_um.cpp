@@ -853,10 +853,11 @@ static CriticalSection critSec1, critSec2, critSec3, critSec4, critSec5;
 // WinMain ====================================================================
 /** Application entry point */
 //=============================================================================
-static void umTrace(const char *m) { FILE *f = fopen("um_client_trace.txt", "a"); if (f) { fprintf(f, "%s\n", m); fclose(f); } }
+const char *UmDiagPath(const char *leaf);
+static void umTrace(const char *m) { FILE *f = fopen(UmDiagPath("um_client_trace.txt"), "a"); if (f) { fprintf(f, "%s\n", m); fclose(f); } }
 static LONG WINAPI umClientCrash(EXCEPTION_POINTERS *ep)
 {
-	FILE *f = fopen("um_client_crash.txt", "w");
+	FILE *f = fopen(UmDiagPath("um_client_crash.txt"), "w");
 	if (f)
 	{
 		fprintf(f, "code=0x%08lx addr=%p image base %p\n", ep->ExceptionRecord->ExceptionCode, ep->ExceptionRecord->ExceptionAddress, (void *)GetModuleHandle(NULL));

@@ -70,7 +70,7 @@ A status page runs at http://localhost:8080/ (players, seats, uptime).
 
 If something goes wrong
 -----------------------
-- The game writes um_client_log.txt (and um_client_trace.txt after a crash) into your Zero Hour folder; the server writes world\server_log.txt. Send these with a bug report.
+- The game writes um_client_log.txt (and um_client_trace.txt after a crash) into the logs folder next to zh_client.exe (or %TEMP%\LivingWorld if that cannot be written); the server writes world\server_log.txt. Send these with a bug report.
 - "Cannot connect": check the address and port, the server's firewall and port forwarding.
 - Black window in fullscreen: use Borderless fullscreen. A d3d8.dll wrapper in your Zero Hour folder is fine; set UM_GAME_D3D8=1 only if you want the game to use it.
 
