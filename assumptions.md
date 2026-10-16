@@ -60,7 +60,7 @@ Everything below was decided without you while you were away. Each item says wha
     roughly (towers use the tallest models).
 24. **Epoch reloads on clients:** a live client reloads every epoch in-process. On city maps with many AI a reload occasionally failed inside the
     renderer (a dangling terrain pointer during the reload; seen twice in ~10 epochs with 40 AI). Instead of hanging, the client now restarts itself
-    and rejoins with the same key (gets its base back from a fresh load, which always worked). The root cause in the W3D reload path is still open.
+    and (was: restarted itself and rejoined; removed in the post-alpha.13 build because it could loop: it now shows an error and closes). The root cause in the W3D reload path is still open.
 25. **Rare early-join desync:** one of six 45-slot fresh-join runs (16 seats, 24 AI pool, 4 AI on Tournament Desert) diverged from frame 30 when the
     client was admitted at frame 14; five runs (admitted at frames 6, 9, 40, 70, 135) had 0 mismatches. Not reproduced since; worth a look.
 26. City maps need ~1.8 GB in the game client and ~1.5 GB in the server (both now large-address-aware, so 64-bit Windows is required).

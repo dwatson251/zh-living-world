@@ -160,16 +160,15 @@ static bool umUnzip(const std::string &z, unsigned rawSize, std::string &raw)
 	raw.assign(rawSize, '\0'); uLongf rl = rawSize;
 	return uncompress((Bytef *)&raw[0], &rl, (const Bytef *)z.data(), (uLong)z.size()) == Z_OK && rl == rawSize;
 }
-// A client that cannot load an epoch snapshot (rare: repeated in-process reloads of a city map can fail inside the renderer) restarts itself with
-// the same command line and environment and joins again with the same key: it gets its own base back from a fresh load, which always works.
+// A client that cannot load an epoch snapshot cannot stay in step with the world: say so (never restart by itself, a machine that fails once would fail
+// again in a loop) and close, leaving the details in the log.
 static void umRestartClient(const char *why)
 {
-	printf("[um] client: %s; restarting the game to rejoin the world\n", why); fflush(stdout);
-	if (getenv("UM_NO_RESTART")) return;
-	STARTUPINFOA si; PROCESS_INFORMATION pi; memset(&si, 0, sizeof si); si.cb = sizeof si; memset(&pi, 0, sizeof pi);
-	char cmd[4096]; strncpy(cmd, GetCommandLineA(), sizeof cmd - 1); cmd[sizeof cmd - 1] = 0;
-	if (CreateProcessA(NULL, cmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) { CloseHandle(pi.hThread); CloseHandle(pi.hProcess); }
-	ExitProcess(0);
+	printf("[um] client: %s; the game cannot continue\n", why); fflush(stdout);
+	if (getenv("UM_NO_DIALOG")) ExitProcess(1);
+	char msg[600]; sprintf(msg, "Living World could not continue: %s.\n\nThe game will close. Please start it again; if this keeps happening, send um_client_log.txt and DebugLogFile.txt (in the game's folder) so it can be investigated.", why);
+	MessageBoxA(NULL, msg, "Living World", MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);
+	ExitProcess(1);
 }
 static bool umLoadSnapshotFile(const char *leaf)
 {

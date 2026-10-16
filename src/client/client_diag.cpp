@@ -44,6 +44,16 @@ static LONG WINAPI diagCrash(EXCEPTION_POINTERS *ep)
 	if (h != INVALID_HANDLE_VALUE) { DWORD w; WriteFile(h, gCrashRec, sizeof gCrashRec, &w, NULL); CloseHandle(h); }
 	return EXCEPTION_EXECUTE_HANDLER;
 }
+// The final, unhandled crash: the record is already written; tell the player instead of vanishing silently.
+static LONG WINAPI diagUnhandled(EXCEPTION_POINTERS *ep)
+{
+	diagCrash(ep);
+	char msg[700];
+	wsprintfA(msg, "Living World crashed.\n\nError %08lX at %08lX (game base %08lX).\n\nThe game will close. Please send um_client_crash.bin, um_client_log.txt and DebugLogFile.txt from the game's folder so it can be investigated.",
+		(unsigned long)ep->ExceptionRecord->ExceptionCode, (unsigned long)ep->ExceptionRecord->ExceptionAddress, (unsigned long)GetModuleHandleA(NULL));
+	MessageBoxA(NULL, msg, "Living World", MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);
+	return EXCEPTION_EXECUTE_HANDLER;
+}
 static LONG CALLBACK diagVectored(EXCEPTION_POINTERS *ep)
 {
 	DWORD c = ep->ExceptionRecord->ExceptionCode;
@@ -52,7 +62,7 @@ static LONG CALLBACK diagVectored(EXCEPTION_POINTERS *ep)
 }
 static void __attribute__((constructor(101))) diagEarly(void)
 {
-	SetUnhandledExceptionFilter(diagCrash);
+	SetUnhandledExceptionFilter(diagUnhandled);
 	AddVectoredExceptionHandler(1, diagVectored);   // drivers and the runtime may replace the unhandled filter; this one sees every access violation first diagWrite("static init", 0);
 }
 // a GUI program has no console: keep the engine's printf output (network, sync) in a file next to the game
