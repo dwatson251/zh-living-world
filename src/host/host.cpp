@@ -22,7 +22,7 @@ struct Setting { const char *key, *label, *def, *flag, *section; };
 static const Setting kSettings[] = {
 	{ "name",                   "Server name",                      "Living World",     "--name",               "server" },
 	{ "game_dir",               "Zero Hour folder",                 "",                 "--game-dir",           "server" },
-	{ "map",                    "Map (codename or .map path)",      "london",           "--map",                "server" },
+	{ "map",                    "Map (codename or .map path)",      "london-medium",    "--map",                "server" },
 	{ "host",                   "Listen on (address)",              "0.0.0.0",          "--host",               "server" },
 	{ "port",                   "Game port",                        "7777",             "--port",               "server" },
 	{ "status_port",            "Status page port (0 = off)",       "8080",             "--status-port",        "server" },
@@ -34,7 +34,7 @@ static const Setting kSettings[] = {
 	{ "game_speed",             "Game speed (15-60, default 30)",   "30",               "--game-speed",         "world" },
 	{ "ai_join_secs",           "Seconds between AI joining",       "20",               "--ai-join-secs",       "world" },
 	{ "epoch_secs",             "Save the world every (secs, auto)", "auto",            "--epoch-secs",         "world" },
-	{ "spawn_deadzone",         "Spawn deadzone (metres)",          "400",              "--spawn-deadzone",     "world" },
+	{ "spawn_deadzone",         "Spawn deadzone (metres, auto)",    "auto",             "--spawn-deadzone",     "world" },
 	{ "ai_reserve_lots",        "Spawn lots kept free for players", "4",                "--ai-reserve-lots",    "world" },
 	{ "start_cash",             "Starting cash",                    "10000",            "--start-cash",         "rules" },
 	{ "last_hit_percent",       "Knock-out bonus: % of victim cash","10",               "--last-hit-percent",   "rules" },
@@ -60,18 +60,29 @@ static const int kMapSetting = 2;   // the "map" row is a drop-down
 // local game files; every map keeps its own persistent world in <world_dir>\<codename>. A .map path also works (its world folder is named after the map).
 struct MapChoice { const char *code, *label, *serverMap; };
 static const MapChoice kMaps[] = {
-	{ "london",  "London, 10 km", "city:london" },
-	{ "newyork", "New York, 10 km", "city:newyork" },
-	{ "paris",   "Paris, 10 km", "city:paris" },
-	{ "dubai",   "Dubai, 10 km", "city:dubai" },
-	{ "grand",   "generated, 1.6 km", "Maps\\Living World Grand\\Living World Grand.map" },
-	{ "desert",  "retail, small", "Maps\\Tournament Desert\\Tournament Desert.map" },
+	{ "london-large",  "London, 10 km",      "city:london-large" },
+	{ "london-medium", "London, 4.8 km",     "city:london-medium" },
+	{ "london-small",  "London, 1.4 km",     "city:london-small" },
+	{ "newyork-large", "New York, 10 km",    "city:newyork-large" },
+	{ "newyork-medium","New York, 4.8 km",   "city:newyork-medium" },
+	{ "newyork-small", "New York, 1.4 km",   "city:newyork-small" },
+	{ "paris-large",   "Paris, 10 km",       "city:paris-large" },
+	{ "paris-medium",  "Paris, 4.8 km",      "city:paris-medium" },
+	{ "paris-small",   "Paris, 1.4 km",      "city:paris-small" },
+	{ "dubai-large",   "Dubai, 10 km",       "city:dubai-large" },
+	{ "dubai-medium",  "Dubai, 4.8 km",      "city:dubai-medium" },
+	{ "dubai-small",   "Dubai, 1.4 km",      "city:dubai-small" },
+	{ "grand",         "generated, 1.6 km",  "Maps\\Living World Grand\\Living World Grand.map" },
+	{ "desert",        "retail, small",      "Maps\\Tournament Desert\\Tournament Desert.map" },
 };
+// codenames of 0.0.1-alpha.13 (one size per city): the large maps
+static const char *kMapAliases[][2] = { { "london", "london-large" }, { "newyork", "newyork-large" }, { "paris", "paris-large" }, { "dubai", "dubai-large" } };
 static const int kNumMaps = sizeof(kMaps) / sizeof(kMaps[0]);
 // "london", "london  (London: ...)" or a path -> codename (world folder name) and the server's UM_SKIRMISH_MAP value
 static void resolveMap(const std::string &value, std::string &code, std::string &serverMap)
 {
 	std::string v = value; size_t sp = v.find_first_of(" \t"); std::string first = sp == std::string::npos ? v : v.substr(0, sp);
+	for (size_t k = 0; k < sizeof kMapAliases / sizeof kMapAliases[0]; ++k) if (_stricmp(first.c_str(), kMapAliases[k][0]) == 0) first = kMapAliases[k][1];
 	for (int i = 0; i < kNumMaps; ++i) if (_stricmp(first.c_str(), kMaps[i].code) == 0) { code = kMaps[i].code; serverMap = kMaps[i].serverMap; return; }
 	for (int i = 0; i < kNumMaps; ++i) if (_stricmp(v.c_str(), kMaps[i].serverMap) == 0) { code = kMaps[i].code; serverMap = kMaps[i].serverMap; return; }
 	serverMap = v;   // a map path: world folder named after the map file
@@ -118,6 +129,10 @@ static std::string worldDirFor(const std::map<std::string, std::string> &c, cons
 	std::string base = absPath(c.find("world_dir")->second, hostDir), code, serverMap; resolveMap(c.find("map")->second, code, serverMap);
 	CreateDirectoryA(base.c_str(), NULL);
 	std::string dir = base + "\\" + code;
+	{	// a world from 0.0.1-alpha.13 lives in <world_dir>\<city> (that release had only the large maps)
+		size_t dash = code.rfind("-large");
+		if (dash != std::string::npos && dash + 6 == code.size() && !fileExists(dir) && fileExists(base + "\\" + code.substr(0, dash))) MoveFileA((base + "\\" + code.substr(0, dash)).c_str(), dir.c_str());
+	}
 	if (!fileExists(dir) && fileExists(base + "\\epoch.sav"))
 	{
 		CreateDirectoryA(dir.c_str(), NULL);
@@ -220,7 +235,9 @@ struct Runner
 		env.push_back("UM_SERVER_NAME=" + cfg["name"]);
 		env.push_back("UM_SKIRMISH_MAP=" + serverMap);
 		env.push_back("UM_CITY_DIR=" + gHostDir + "\\cities");
-		{ char sd[64]; sprintf(sd, "UM_SPAWN_DEADZONE=%d", num(cfg, "spawn_deadzone", 400) * 5); env.push_back(sd); sprintf(sd, "UM_AI_RESERVE_LOTS=%d", num(cfg, "ai_reserve_lots", 4)); env.push_back(sd); }   // metres -> world units (0.2 m each)
+		{ char sd[64]; int dz = atoi(cfg["spawn_deadzone"].c_str());
+		  if (dz <= 0) dz = mapCode.find("-small") != std::string::npos ? 120 : mapCode.find("-medium") != std::string::npos ? 250 : 400;   // auto: by map size
+		  sprintf(sd, "UM_SPAWN_DEADZONE=%d", dz * 5); env.push_back(sd); sprintf(sd, "UM_AI_RESERVE_LOTS=%d", num(cfg, "ai_reserve_lots", 4)); env.push_back(sd); }   // metres -> world units (0.2 m each)
 		sprintf(b, "%d", startAi); env.push_back(std::string("UM_SKIRMISH_AI=") + b);
 		sprintf(b, "%d", players); env.push_back(std::string("UM_HUMAN_SLOTS=") + b);
 		sprintf(b, "%d", pool); env.push_back(std::string("UM_AI_POOL=") + b);
@@ -228,8 +245,8 @@ struct Runner
 		sprintf(b, "%d", startAi + players + pool); env.push_back(std::string("UM_SYNTH_STARTS=") + b);
 		{ int sp = num(cfg, "game_speed", 30); if (sp < 15) sp = 15; if (sp > 60) sp = 60; sprintf(b, "%d", sp); env.push_back(std::string("UM_GAME_SPEED=") + b); }
 		sprintf(b, "%d", num(cfg, "ai_join_secs", 20) * 30); env.push_back(std::string("UM_AI_JOIN_FRAMES=") + b);
-		{	// "auto": every 5 minutes, or every 15 on a city map (an epoch pauses the world while it is saved and reloaded: ~20 s on a city map)
-			int es = atoi(cfg["epoch_secs"].c_str()); if (es <= 0) es = serverMap.compare(0, 5, "city:") == 0 ? 900 : 300;
+		{	// "auto": every 5 minutes; 10 on medium and 15 on large city maps (an epoch pauses the world while it is saved and reloaded: ~20 s on a large map)
+			int es = atoi(cfg["epoch_secs"].c_str()); if (es <= 0) es = mapCode.find("-large") != std::string::npos ? 900 : mapCode.find("-medium") != std::string::npos ? 600 : 300;
 			sprintf(b, "%d", es * 30 * num(cfg, "game_speed", 30) / 30); env.push_back(std::string("UM_EPOCH=") + b);
 		}
 		env.push_back("UM_START_CASH=" + cfg["start_cash"]);

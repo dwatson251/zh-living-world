@@ -305,3 +305,17 @@ the host, map codenames in docker-compose comments, each map with its own persis
   generated map with epochs: 0 mismatches; 45-slot fresh join on Tournament Desert: 5 of 6 runs 0 mismatches (one run admitted at frame 14 diverged from
   frame 30, not reproduced); queue_test, return_test (now with protection so the absent base survives the faster sim) and spawn_test pass; persist_test
   resumes from the compressed epoch (its overlap comparison found no common frames).
+
+## Map sizes: -small, -medium, -large (2026-10-16)
+- Playtest on an older PC: the 10 km maps were unplayable. Every city now comes in three sizes at the same real scale, cut around the same centre:
+  small 710 cells (1.4 km) = the largest map retail Zero Hour ships (MD_GLA05, 710 x 710; the largest retail skirmish map, Twilight Flame, is 630),
+  medium 2400 cells (4.8 km), large 5000 cells (10 km). Spawn lots scale (small: 64 m clearings 190 m apart; medium 100 m / 380 m; large 120 m / 520 m).
+  Spawn lots: small 15-24, medium 64-86, large 164-212. Memory (game client, early game): small ~400 MB, medium ~750 MB, large ~1.8 GB.
+- Codenames <city>-<size> (london-medium ...); the 0.0.1-alpha.13 names london/newyork/paris/dubai are aliases for -large (map references and world
+  folders included). Defaults: map london-medium; spawn_deadzone auto = 120/250/400 m; epoch_secs auto = 300/600/900 s by size.
+- citygen: OSM areas and ways are kept when their bounding box touches the map (two sampled nodes missed the Thames polygon on the 1.4 km map).
+- Join race fixed (found on Paris medium, where the client loads fast and joins at frame 1; also explains the one 45-slot desync): before the world
+  really starts, the client's logic loop ticks with a stale frame counter, and both the network update and the pre-frame hook ran the batch for that
+  stale frame into the old state (the joiner's bind was lost or moved to frame 0). Now nothing runs between UmStartWorld and GameLogic's real start
+  (UmNetWorldStarting, called from startNewGame after the deferral, for fresh starts and snapshot loads). Checks: 45-slot desert x2, Paris medium x2
+  (join at frame 1), Paris medium snapshot join with epochs, London small, London large: 0 mismatches.

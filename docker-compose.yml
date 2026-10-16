@@ -15,15 +15,16 @@ services:
     environment:
       # ---- [server]
       LW_NAME: "${LW_NAME:-Living World}"                    # Server name
-      # Map codenames (each map keeps its own persistent world in the volume, /data/world/<codename>; switch freely and come back):
-      #   london   London, real city from OpenStreetMap, 10 x 10 km, up to 128 players
-      #   newyork  New York (Midtown, Lower Manhattan, Brooklyn, Queens, Jersey City), 10 x 10 km, up to 128 players
-      #   paris    Paris, 10 x 10 km, up to 128 players
-      #   dubai    Dubai (Downtown, Business Bay, Jumeirah), 10 x 10 km, up to 128 players
+      # Map codenames: <city>-<size>. Each map keeps its own persistent world in the volume (/data/world/<codename>); switch freely and come back.
+      #   cities:  london, newyork, paris, dubai  (real streets, parks, rivers and bridges from OpenStreetMap, at real scale)
+      #   sizes:   -small   1.4 km, the largest map size retail Zero Hour ships; light enough for older PCs, ~10-20 players
+      #            -medium  4.8 km, ~60-90 players
+      #            -large   10 km, up to 128 players; needs a fast CPU on the server and every client
+      #   e.g. london-medium, newyork-small, dubai-large
       #   grand    Living World Grand: generated hills, 1.6 km, up to 128 players
       #   desert   Tournament Desert: the small retail map
       # (a path such as "Maps\\Some Map\\Some Map.map" also works)
-      LW_MAP: "${LW_MAP:-london}"                            # Map (codename or .map path)
+      LW_MAP: "${LW_MAP:-london-medium}"                     # Map (codename or .map path)
       LW_PORT: "7777"                                        # Game port (inside the container; change the published port above)
       LW_STATUS_PORT: "8080"                                 # Status page port (0 = off) (inside the container; change the published port above)
       # ---- [world]
@@ -34,7 +35,7 @@ services:
       LW_GAME_SPEED: "${LW_GAME_SPEED:-30}"                  # Game speed (15-60, default 30)
       LW_AI_JOIN_SECS: "${LW_AI_JOIN_SECS:-20}"              # Seconds between AI joining
       LW_EPOCH_SECS: "${LW_EPOCH_SECS:-auto}"                # Save the world every (secs, auto)
-      LW_SPAWN_DEADZONE: "${LW_SPAWN_DEADZONE:-400}"         # Spawn deadzone (metres)
+      LW_SPAWN_DEADZONE: "${LW_SPAWN_DEADZONE:-auto}"        # Spawn deadzone (metres, auto)
       LW_AI_RESERVE_LOTS: "${LW_AI_RESERVE_LOTS:-4}"         # Spawn lots kept free for players
       # ---- [rules]
       LW_START_CASH: "${LW_START_CASH:-10000}"               # Starting cash

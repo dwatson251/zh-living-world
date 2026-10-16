@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""citygen.py <city> [--cells N] [--out PATH] [--preview PNG]: build a Living World city pack from open data.
+"""citygen.py <city> [--size small|medium|large] [--out PATH] [--preview PNG]: build a Living World city pack from open data.
 
 A city pack (.lwcity) is the real-world part of a city map: a height field, a surface class and a flag per terrain cell, plus a list of
 buildings, trees, bushes, parked cars, points of interest and spawn lots. It holds no game data: the map builder in the game program
@@ -11,10 +11,10 @@ Sources (both may be redistributed with attribution, which the pack carries):
     European Union and ESA. It is a surface model (it includes buildings), so the generator removes the buildings with a minimum filter.
 
 Scale: Zero Hour's civilian cars are 22 units long and its town houses about 50 x 32 units, which puts one world unit at 0.2 m. A terrain cell is
-10 units, so 2 m. The default map is 5000 x 5000 cells: 10 km across, which `tools/bigmap_bench.sh` showed the engine can carry with 128 players.
+10 units, so 2 m. Sizes (see SIZES): small 710 cells (1.4 km, the largest retail Zero Hour map), medium 2400 (4.8 km), large 5000 (10 km): what `tools/bigmap_bench.sh` showed the engine can carry with 128 players.
 
 Run it with uv (dependencies are fetched on the fly):
-  uv run --no-project --with osmium --with shapely --with numpy --with pillow --with rasterio --with scipy tools/citygen/citygen.py london
+  uv run --no-project --with osmium --with shapely --with numpy --with pillow --with rasterio --with scipy tools/citygen/citygen.py london --size medium
 """
 import argparse, json, math, os, struct, sys, time, urllib.request, zlib
 import numpy as np
@@ -34,6 +34,13 @@ CITIES = {
 }
 
 MPC = 2.0            # metres per terrain cell
+# map sizes (all at the same real scale, cut around the same centre). small = the largest map that ships with Zero Hour (MD_GLA05, 710 x 710 cells);
+# large = what the engine carries for 128 players after the Living World changes; medium in between. Spawn lots scale with the map.
+SIZES = {
+    'small':  dict(cells=710,  lot_r=32, spacing=95,  label='Small'),    # 1.4 km
+    'medium': dict(cells=2400, lot_r=50, spacing=190, label='Medium'),   # 4.8 km
+    'large':  dict(cells=5000, lot_r=60, spacing=260, label='Large'),    # 10 km
+}
 UPM = 5.0            # world units per metre (10 units per cell)
 BORDER = 40          # cells of non-playable border on each side (part of the grid)
 
@@ -112,6 +119,11 @@ class Grid:
         x, y = self.m(lon, lat)
         return (x / MPC, self.n - y / MPC)
 
+    def overlaps(self, pts, pad=0.002):
+        """True when the bounding box of the points touches the map (a big river or park can cover the map without a node inside it)."""
+        xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
+        return min(xs) <= self.lon_max + pad and max(xs) >= self.lon_min - pad and min(ys) <= self.lat_max + pad and max(ys) >= self.lat_min - pad
+
     def inside(self, lon, lat, pad=0.002):
         return self.lon_min - pad <= lon <= self.lon_max + pad and self.lat_min - pad <= lat <= self.lat_max + pad
 
@@ -160,7 +172,7 @@ def parse_osm(cfg, grid):
                     pts = [(n.lon, n.lat) for n in o.nodes if n.location.valid()]
                 except osmium.InvalidLocationError:
                     continue
-                if len(pts) < 2 or not any(grid.inside(x, y) for x, y in pts[::max(1, len(pts) // 8)] + [pts[-1]]):
+                if len(pts) < 2 or not grid.overlaps(pts):
                     continue
                 pp = [grid.px(x, y) for x, y in pts]
                 if hw in ROAD_W:
@@ -181,7 +193,7 @@ def parse_osm(cfg, grid):
                         rings.append((ring, holes))
                 except osmium.InvalidLocationError:
                     continue
-                if not rings or not any(grid.inside(*r[0][0]) or grid.inside(*r[0][len(r[0]) // 2]) for r in rings):
+                if not rings or not any(grid.overlaps(r[0]) for r in rings):
                     continue
                 b = tags.get('building')
                 if b and b != 'no' and tags.get('location') != 'underground':
@@ -303,7 +315,8 @@ def raster_lines(draw, pts, width_px, fill):
             draw.ellipse((x - r, y - r, x + r, y + r), fill=fill)
 
 
-def build(city, cells, out, preview):
+def build(city, size, out, preview):
+    sz = SIZES[size]; cells = sz['cells']
     from PIL import Image, ImageDraw
     from scipy import ndimage
     import shapely
@@ -403,8 +416,8 @@ def build(city, cells, out, preview):
     # ---- spawn lots: open, flat, dry ground far from buildings; cleared building sites where the city is too dense
     free = ~(B | W)
     edt = ndimage.distance_transform_edt(free)
-    lot_r = 60                                          # cells (120 m): cleared radius of a base
-    spacing = 260                                       # cells (520 m) between lot centres
+    lot_r = sz['lot_r']                                 # cells: cleared radius of a base (large: 60 = 120 m)
+    spacing = sz['spacing']                             # cells between lot centres (large: 260 = 520 m)
     margin = BORDER + lot_r + 20
     lots = []
     def far_enough(x, y, sp):
@@ -504,7 +517,7 @@ def build(city, cells, out, preview):
     # ---- flags, flip rows to south-first (the engine's row 0 is the south edge), write
     F = (B.astype(np.uint8) * F_BLOCKED) | (W.astype(np.uint8) * F_WATER) | (L.astype(np.uint8) * F_LOT)
     Hb = np.clip(np.round(H), 1, 255).astype(np.uint8)
-    header = dict(format=1, city=city, title=cfg['title'], cells=n, border=BORDER, metres_per_cell=MPC, units_per_metre=UPM,
+    header = dict(format=1, city=f'{city}-{size}', size=size, title=f"{cfg['title']} {sz['label']}", cells=n, border=BORDER, metres_per_cell=MPC, units_per_metre=UPM,
                   centre=cfg['centre'], bbox=[grid.lon_min, grid.lat_min, grid.lon_max, grid.lat_max], water_level=24,
                   surfaces=SURFACE_NAMES, ground=SURFACE_NAMES[ground], lot_radius_cells=lot_r, objects=counts,
                   relief=dict(low_m=lo, high_m=hi, steps_per_m=per_m),
@@ -549,8 +562,8 @@ def write_preview(path, S, B, W, L, objs, n, size=2000):
 if __name__ == '__main__':
     ap = argparse.ArgumentParser()
     ap.add_argument('city', choices=sorted(CITIES))
-    ap.add_argument('--cells', type=int, default=5000)
+    ap.add_argument('--size', choices=sorted(SIZES), default='large')
     ap.add_argument('--out')
     ap.add_argument('--preview')
     a = ap.parse_args()
-    build(a.city, a.cells, a.out or os.path.join(LAB, 'cities', a.city + '.lwcity'), a.preview)
+    build(a.city, a.size, a.out or os.path.join(LAB, 'cities', f'{a.city}-{a.size}.lwcity'), a.preview)

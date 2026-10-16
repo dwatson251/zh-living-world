@@ -5766,7 +5766,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/Damage.cpp b/GameEngine/Source/Ga
  	"CRUSH",					
 diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source/GameLogic/System/GameLogic.cpp
 --- a/GameEngine/Source/GameLogic/System/GameLogic.cpp	2026-10-13 16:49:45.069305412 +0100
-+++ b/GameEngine/Source/GameLogic/System/GameLogic.cpp	2026-10-16 13:33:55.199283420 +0100
++++ b/GameEngine/Source/GameLogic/System/GameLogic.cpp	2026-10-16 16:36:59.777931087 +0100
 @@ -83,6 +83,7 @@
  #include "GameLogic/CrateSystem.h"
  #include "GameLogic/FPUControl.h"
@@ -5811,11 +5811,11 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
 +}
 +void UmBindPlayer(Int slotNum, Int cash, Int tmpl, UnsignedInt rgb, const UnsignedInt *nickWords, Int spawnX, Int spawnY)
 +{
-+	GameInfo *game = TheGameInfo; if (!game || slotNum < 0 || slotNum >= MAX_SLOTS) return;
++	GameInfo *game = TheGameInfo; if (!game || slotNum < 0 || slotNum >= MAX_SLOTS) { printf("[um] bind slot %d skipped at frame %u: no game info\n", (int)slotNum, (unsigned)TheGameLogic->getFrame()); return; }
 +	GameSlot *slot = game->getSlot(slotNum); Player *player = umPlayerForSlot(slotNum);
-+	if (!slot || !player) return;
++	if (!slot || !player) { printf("[um] bind slot %d skipped at frame %u: no %s\n", (int)slotNum, (unsigned)TheGameLogic->getFrame(), slot ? "player" : "slot"); return; }
 +	const PlayerTemplate *pt = ThePlayerTemplateStore->getNthPlayerTemplate(slot->getPlayerTemplate());
-+	if (!pt) return;
++	if (!pt) { printf("[um] bind slot %d skipped at frame %u: no player template\n", (int)slotNum, (unsigned)TheGameLogic->getFrame()); return; }
 +	player->umSetPending(FALSE);
 +	player->umResetScripts();
 +	{	// the occupant's choices: faction, colour and name (kept per slot so a restarted or late-joining process can restore them)
@@ -5984,7 +5984,19 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  // ------------------------------------------------------------------------------------------------
  void GameLogic::startNewGame( Bool loadingSaveGame )
  {
-@@ -1178,7 +1332,7 @@
+@@ -1157,7 +1311,10 @@
+ 			m_startNewGame = TRUE;
+ 			return;
+ 
+-		}  
++		}
++#ifdef UM_LW
++	{ extern void UmNetWorldStarting(); UmNetWorldStarting(); }   // Living World replica: the world really starts now; command batches may run from its frame 0
++#endif  
+ 
+ 	}  // end if
+ 
+@@ -1178,7 +1335,7 @@
  	GameInfo *game = NULL;
  	TheGameInfo = NULL;
  	Int localSlot = 0;
@@ -5993,7 +6005,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  	{
  		if (TheLAN)
  		{
-@@ -1540,7 +1694,7 @@
+@@ -1540,7 +1697,7 @@
  				if (count)
  				{
  					ScriptList *pSL = TheSidesList->getSideInfo(0)->getScriptList();
@@ -6002,7 +6014,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  					while (next)
  					{
  						Script *dupe = next->duplicate();
-@@ -1794,6 +1948,9 @@
+@@ -1794,6 +1951,9 @@
  			Coord3D pos = *pMapObj->getLocation();
  			pos.z += TheTerrainLogic->getGroundHeight( pos.x, pos.y );
  			Real angle = normalizeAngle(pMapObj->getAngle());
@@ -6012,7 +6024,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  			if (thingTemplate->isKindOf(KINDOF_OPTIMIZED_TREE)) {
  				// Opt trees and props just get drawables to tell the client about it, then deleted. jba [6/5/2003]
  				// This way there is no logic object to slow down partition manager and core logic stuff.				
-@@ -1845,6 +2002,9 @@
+@@ -1845,6 +2005,9 @@
  			Coord3D pos = *pMapObj->getLocation();
  			pos.z += TheTerrainLogic->getGroundHeight( pos.x, pos.y );
  			Real angle = normalizeAngle(pMapObj->getAngle());
@@ -6022,7 +6034,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  			if (thingTemplate->isKindOf(KINDOF_OPTIMIZED_TREE)) {
  				// Opt trees and props just get drawables to tell the client about it, then deleted. jba [6/5/2003]
  				// This way there is no logic object to slow down partition manager and core logic stuff.
-@@ -1993,6 +2153,9 @@
+@@ -1993,6 +2156,9 @@
  
  
  
@@ -6032,7 +6044,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  				placeNetworkBuildingsForPlayer(i, slot, player, pt);
  			}
  
-@@ -2092,7 +2255,12 @@
+@@ -2092,7 +2258,12 @@
  
  	// final step, run newMap for all players
  	if( loadingSaveGame == FALSE )
@@ -6045,7 +6057,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  
  	if ( isChallengeCampaign )
  	{
-@@ -3650,6 +3818,9 @@
+@@ -3650,6 +3821,9 @@
  	// would be getting the CRC anyway, so replays can get the CRCs from the exact instant in time as the original.
  	Bool isMPGameOrReplay = (TheRecorder && TheRecorder->isMultiplayer() && getGameMode() != GAME_SHELL && getGameMode() != GAME_NONE);
  	Bool isSoloGameOrReplay = (TheRecorder && !TheRecorder->isMultiplayer() && getGameMode() != GAME_SHELL && getGameMode() != GAME_NONE);
@@ -6055,7 +6067,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  	Bool generateForMP = (isMPGameOrReplay && (m_frame % TheGameInfo->getCRCInterval()) == 0);
  #if defined(_DEBUG) || defined(_INTERNAL)
  	Bool generateForSolo = isSoloGameOrReplay && ((m_frame && (m_frame%100 == 0)) ||
-@@ -3690,6 +3861,12 @@
+@@ -3690,6 +3864,12 @@
  
  	// process client commands
  	{
@@ -6068,7 +6080,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  		processCommandList( TheCommandList );
  	}
  
-@@ -4691,13 +4868,22 @@
+@@ -4691,13 +4871,22 @@
  {
    
  	// version
@@ -6092,7 +6104,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  	//
  	// note that we do not do the id counter here, we did it in the game state block because
  	// it's important to do that part very early in the load process
-@@ -4808,6 +4994,15 @@
+@@ -4808,6 +4997,15 @@
  
  		}  // end for, i
  

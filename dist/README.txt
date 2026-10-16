@@ -51,18 +51,22 @@ Hosting a world
 Seats and AI: the world holds up to 128 players in total (human seats + AI), plus the server's observer. Set "Max players (seats)", "Max AI players", "AI seats (pool)" and "AI players at world start"; their sum plus 1 must not
 be more than 129. A saved world keeps the seat counts it was started with: to change them, stop the server, delete that map's folder in "world" (this ends that world) and start again.
 Game speed (15-60, default 30) sets how fast the game runs for everybody, like the speed slider in a skirmish.
-Maps: pick one from the Map drop-down (or set map = <codename> in um_server.ini, --map <codename>, LW_MAP in Docker):
-  london, newyork, paris, dubai   real cities at real size (10 x 10 km each, 2 m per terrain cell), up to 128 players. Streets, parks, rivers,
-                                  bridges, trees and parked cars come from OpenStreetMap; buildings are drawn with the game's own models.
-  grand                           Living World Grand: generated hills, 128 start spots.
-  desert                          Tournament Desert, the small retail map.
-  A path to any other .map file also works.
+Maps: pick one from the Map drop-down (or set map = <codename> in um_server.ini, --map <codename>, LW_MAP in Docker).
+  Real cities, each in three sizes, all at real scale (2 m per terrain cell) and centred on the same spot:
+    london-small, london-medium, london-large, and the same for newyork, paris and dubai.
+    -small   1.4 x 1.4 km: the largest map size retail Zero Hour ships. Runs on older PCs; room for roughly 10-20 players.
+    -medium  4.8 x 4.8 km: the default (london-medium). Room for about 60-90 players.
+    -large   10 x 10 km: up to 128 players; needs a fast CPU on the server and on every player's PC (every PC runs the whole world).
+  Streets, parks, rivers, bridges, trees and parked cars come from OpenStreetMap; buildings are drawn with the game's own models.
+  grand    Living World Grand: generated hills, 128 start spots.
+  desert   Tournament Desert, the small retail map.
+  A path to any other .map file also works. The old codenames london, newyork, paris and dubai still work and mean the large maps.
   The first time a city map is used, the server and every player's game build it from cities\<codename>.lwcity and your own game files
-  (about a minute; nothing from the game is shipped) into the Maps folder of your Zero Hour data folder in Documents.
-  City maps need a 64-bit Windows and about 2 GB of memory for the game.
+  (a few seconds; nothing from the game is shipped) into the Maps folder of your Zero Hour data folder in Documents.
+  Memory for the game: about 400 MB on small, 750 MB on medium, 1.8 GB on large city maps (large needs a 64-bit Windows).
 Every map keeps its own persistent world (world\<codename>): switching to another map and back resumes each world where it was.
 Spawning on city maps: a new base goes to a random free spawn spot (a park, open ground or a cleared building site) where no other player has
-anything within the spawn deadzone (default 400 m). When no such spot is free, joining is refused with a message; try again later.
+anything within the spawn deadzone ("auto": 120 m on small, 250 m on medium, 400 m on large maps). When no such spot is free, joining is refused with a message; try again later.
 AI players only join while more than "Spawn lots kept free for players" (default 4) spots are free.
 Joining a world that has been running for a while replays it from the last save, which can take a few minutes with many AI players; the game shows how far it has got.
 The host restarts the server from its saved world if it stops. The worlds live in the "world" folder next to the program (one folder per map): back it up to keep them.

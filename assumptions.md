@@ -64,3 +64,11 @@ Everything below was decided without you while you were away. Each item says wha
 25. **Rare early-join desync:** one of six 45-slot fresh-join runs (16 seats, 24 AI pool, 4 AI on Tournament Desert) diverged from frame 30 when the
     client was admitted at frame 14; five runs (admitted at frames 6, 9, 40, 70, 135) had 0 mismatches. Not reproduced since; worth a look.
 26. City maps need ~1.8 GB in the game client and ~1.5 GB in the server (both now large-address-aware, so 64-bit Windows is required).
+
+## Map sizes (2026-10-16)
+27. **Three sizes per city at the same real scale**, cut around the same centre (not the same area at a coarser scale): small = 710 cells
+    (1.4 km), the largest map retail Zero Hour ships (MD_GLA05); medium = 2400 cells (4.8 km); large = 5000 (10 km). Keeping 2 m per cell keeps
+    buildings, streets and units in proportion; the price is that a small map shows only the centre (e.g. Trafalgar Square to Westminster).
+28. **Default map is london-medium.** Small maps have 15-24 spawn spots, so a small world holds roughly 10-20 players; medium 60-90.
+29. **Deadzone and save interval follow the size** when left on "auto" (120/250/400 m; 5/10/15 min).
+30. The 0.0.1-alpha.13 codenames (london, ...) keep working and mean the large maps; their world folders move to <city>-large.

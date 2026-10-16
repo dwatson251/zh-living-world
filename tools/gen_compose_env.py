@@ -7,11 +7,12 @@ src = open(os.path.join(LAB, 'src/host/host.cpp')).read()
 rows = re.findall(r'\{\s*"(\w+)",\s*"((?:[^"\\]|\\.)*)",\s*"((?:[^"\\]|\\.)*)",\s*"(--[\w-]+)",\s*"(\w+)"\s*\}', src)
 SKIP = {'game_dir', 'world_dir', 'host'}          # set by the image's entrypoint
 FIXED = {'port': '7777', 'status_port': '8080'}   # ports inside the container: change the published ports instead
-MAPS = '''      # Map codenames (each map keeps its own persistent world in the volume, /data/world/<codename>; switch freely and come back):
-      #   london   London, real city from OpenStreetMap, 10 x 10 km, up to 128 players
-      #   newyork  New York (Midtown, Lower Manhattan, Brooklyn, Queens, Jersey City), 10 x 10 km, up to 128 players
-      #   paris    Paris, 10 x 10 km, up to 128 players
-      #   dubai    Dubai (Downtown, Business Bay, Jumeirah), 10 x 10 km, up to 128 players
+MAPS = '''      # Map codenames: <city>-<size>. Each map keeps its own persistent world in the volume (/data/world/<codename>); switch freely and come back.
+      #   cities:  london, newyork, paris, dubai  (real streets, parks, rivers and bridges from OpenStreetMap, at real scale)
+      #   sizes:   -small   1.4 km, the largest map size retail Zero Hour ships; light enough for older PCs, ~10-20 players
+      #            -medium  4.8 km, ~60-90 players
+      #            -large   10 km, up to 128 players; needs a fast CPU on the server and every client
+      #   e.g. london-medium, newyork-small, dubai-large
       #   grand    Living World Grand: generated hills, 1.6 km, up to 128 players
       #   desert   Tournament Desert: the small retail map
       # (a path such as "Maps\\\\Some Map\\\\Some Map.map" also works)

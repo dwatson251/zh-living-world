@@ -236,7 +236,7 @@ int tgaTilesAcross(const char *terrainTexFile)
 std::string UmCityMapName(const std::string &title) { return std::string("Living World ") + title; }
 
 // Builds the city map if it is missing or was made from another pack/builder version. Returns the map path relative to the user data folder
-// (Maps\Living World <Title>\Living World <Title>.map) in mapPathOut. city is the pack name (london, newyork, paris, dubai).
+// (Maps\Living World <Title>\Living World <Title>.map) in mapPathOut. city is the pack name (<city>-<size>: london-medium, dubai-small, ...).
 bool UmEnsureCityMap(const char *city, std::string *mapPathOut)
 {
 	std::string packPath = findPack(city);
@@ -462,6 +462,7 @@ bool mapRefMake(const char *mapPath, std::string *ref)
 bool mapRefResolve(const std::string &ref, std::string *local)
 {
 	char city[64]; unsigned long crc = 0; if (sscanf(ref.c_str(), "%63s %lx", city, &crc) != 2) return false;
+	if (!strchr(city, '-') && strlen(city) < 56) strcat(city, "-large");   // 0.0.1-alpha.13 had one size per city (now the large maps)
 	std::string rel; if (!UmEnsureCityMap(city, &rel)) return false;
 	*local = std::string(TheGlobalData->getPath_UserData().str()) + rel;
 	unsigned long have = fileCrc(*local);

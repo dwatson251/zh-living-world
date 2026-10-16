@@ -13,9 +13,10 @@ Zero Hour's INI data, maps and models, so you provide a copy of a Zero Hour inst
 4. **CentOS:** open the ports (`firewall-cmd --permanent --add-port=7777/tcp --add-port=8080/tcp && firewall-cmd --reload`). With SELinux enforcing,
    keep the `:z` on the game-files volume. If you bind-mount the world folder instead of using the named volume, `chown 1000:1000` it.
 5. **Settings:** `LW_<SETTING>` environment variables (see `um_server.ini` for the list), or mount your own file at `/data/config/um_server.ini`.
-6. **Maps:** set `LW_MAP` to a codename: `london`, `newyork`, `paris`, `dubai` (real cities, 10 x 10 km, up to 128 players), `grand` or `desert`.
+6. **Maps:** set `LW_MAP` to a codename `<city>-<size>`: city `london`, `newyork`, `paris` or `dubai`; size `small` (1.4 km, the largest retail
+   map size, light), `medium` (4.8 km, default `london-medium`) or `large` (10 km, up to 128 players), e.g. `paris-small`; or `grand`, `desert`.
    Each map keeps its own world in the volume (`/data/world/<codename>`), so switching maps and back resumes each world. City maps are built from the
-   packs in the image (`/opt/livingworld/cities`) and your game files on first start (about a minute) and need roughly 1.5 GB of memory for the server.
+   packs in the image (`/opt/livingworld/cities`) and your game files on first start; a large map needs roughly 1.5 GB of memory for the server.
 7. **Saves/backups:** the named volume `lw-world` holds one folder per map (`epoch.sav`, `cmds.log` and the rest); stop the stack and copy the volume to back up.
 7. Wrong or missing files: the container exits with a message naming the missing `.big` files.
 

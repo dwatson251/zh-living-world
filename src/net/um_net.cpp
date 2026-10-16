@@ -212,8 +212,12 @@ void UmApplyProfiles()
 std::string gUmKickReason; DWORD gUmKickTick = 0; bool gUmHasUi = false;   // the graphical client shows the reason for a few seconds before it closes
 static std::vector<bool> gInertSlots;
 bool UmIsInertSlot(int slot) { return slot >= 0 && slot < (int)gInertSlots.size() && gInertSlots[slot]; }
+static bool gUmWorldPending = false;   // set when this client asks for the world; cleared when GameLogic really starts it (fresh or from a snapshot)
+bool UmMarkStartingWorld() { gUmWorldPending = true; return true; }
+void UmNetWorldStarting() { gUmWorldPending = false; }
 void UmStartWorld(const UmWorldDesc &w)
 {
+	UmMarkStartingWorld();
 	UmLoadStage("Starting the world");
 	if (TheGameLogic && TheGameLogic->isInGame()) TheGameLogic->clearGameData(FALSE);   // graphical client: leave the shell map first, like the retail skirmish start does
 	gInertSlots.assign(w.slots.size(), false); for (size_t i = 0; i < w.slots.size(); ++i) gInertSlots[i] = !w.slots[i].name.empty() && w.slots[i].name[0] == '~';
@@ -988,7 +992,7 @@ public:
 	// queue the server's command batch for logic frame f (once; later calls find nothing)
 	void execBatch(unsigned f)
 	{
-		if (m_role != UM_ROLE_CLIENT || f >= m_limit) return;
+		if (m_role != UM_ROLE_CLIENT || f >= m_limit || gUmWorldPending) return;   // nothing runs until the world has really started (the old frame counter is meaningless)
 		std::map<unsigned, std::string>::iterator it = m_inbox.find(f);
 		if (it == m_inbox.end()) return;
 		Rd r(it->second.data(), it->second.size()); unsigned n = r.u32();
@@ -1037,7 +1041,14 @@ void UmNetStartClient(const char *host, int port)
 void UmNetPostUpdate() { if (TheUmNet) TheUmNet->postUpdate(); }
 bool UmNetCatchUp(unsigned *frame, unsigned *live) { return TheUmNet && TheUmNet->catchUp(frame, live); }
 int UmNetMySlot() { return TheUmNet ? TheUmNet->mySlot() : -1; }
-void UmNetPreFrame(unsigned frame) { if (TheUmNet) TheUmNet->execBatch(frame); }
+// Before the world runs (main menu, world being started) the logic loop can tick with a leftover frame counter. In the update that starts the world only
+// the frame-0 batch belongs (the world starts inside the update that runs its frame 0); a later batch queued there ran at the wrong frame or in no game
+// (a joiner's bind was lost or moved to frame 0, and the client desynced from its first frames).
+void UmNetPreFrame(unsigned frame)
+{
+	if (!TheUmNet || gUmWorldPending) return;   // the update that only schedules the start still has the old frame counter and the old world
+	if (TheGameLogic && TheGameLogic->isInGame()) TheUmNet->execBatch(frame);
+}
 unsigned UmNetSpeed() { return TheUmNet ? TheUmNet->worldSpeed() : 30; }
 bool UmNetRentInfo(UmRentInfo *out) { if (!TheUmNet || !TheUmNet->rentInfo().valid) return false; *out = TheUmNet->rentInfo(); return true; }
 
