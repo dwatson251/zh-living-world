@@ -70,27 +70,28 @@ static void umTestBuild()
 }
 
 void UmClientHeartbeat(void);
-extern std::string gUmKickReason; extern DWORD gUmKickTick; extern bool gUmHasUi;
+extern std::string gUmKickReason, gUmNotice; extern DWORD gUmKickTick; extern bool gUmHasUi, gUmKickFatal;
 static void umClientMessages()
 {
 	static DWORD lastMsg = 0; DWORD now = GetTickCount();
 	if (!TheInGameUI || !TheGameLogic || !TheGameLogic->isInGame()) return;
-	if (gUmKickTick)
-	{
+	if (gUmKickTick && gUmKickFatal)
+	{	// another connection took this seat: this one is done
 		if (now - lastMsg > 1500) { lastMsg = now; UnicodeString m; std::string why = gUmKickReason; for (size_t i = 0; i < why.size(); ++i) m.concat((WideChar)(unsigned char)why[i]); TheInGameUI->message(UnicodeString(L"You are out of the world (%ls). The game closes in a few seconds; start it again to rejoin."), m.str()); }
 		if (now - gUmKickTick > 8000) { fflush(stdout); ExitProcess(0); }
 		return;
 	}
+	if (!gUmNotice.empty()) { UnicodeString m; for (size_t i = 0; i < gUmNotice.size(); ++i) m.concat((WideChar)(unsigned char)gUmNotice[i]); gUmNotice.clear(); TheInGameUI->message(UnicodeString(L"%ls"), m.str()); }
 	{	// joining a world that has run for a while means replaying it from the last saved snapshot: say so, it can take minutes
 		static DWORD lastCatch = 0; unsigned cf, cl;
 		if (UmNetCatchUp(&cf, &cl) && now - lastCatch > 3000) { lastCatch = now; wchar_t b[160]; swprintf(b, 160, L"Joining the world: catching up with the server (%u%%). This can take a few minutes.", (unsigned)(cl ? (unsigned long long)cf * 100 / cl : 0)); TheInGameUI->message(UnicodeString(b)); }
 	}
-	if (UmNetMySlot() < 0 && now - lastMsg > 6000) { lastMsg = now; TheInGameUI->message(UnicodeString(L"Watching the world: every seat is taken. You join as soon as one frees up.")); }
 }
 static void umClientTick()
 {
 	gUmHasUi = true;
 	umClientMessages();
+	{ extern void UmQuitMenuRefresh(void); UmQuitMenuRefresh(); }   // the open game menu shows the live queue position
 	UmClientHeartbeat();
 	{	// exclusive fullscreen minimises a window that was not active when the display mode changed; bring it back (borderless/windowed never need this)
 		extern HWND ApplicationHWnd; static unsigned lastTry = 0; unsigned now = GetTickCount();
@@ -106,22 +107,29 @@ static void umClientTick()
 	int slot = UmNetMySlot();
 	if ((getenv("UM_TRACE_LOCAL") ? TheGameLogic->getFrame() % 300 == 0 : TheGameLogic->getFrame() % 3000 == 0)) { static unsigned lastF = 0; if (lastF != TheGameLogic->getFrame()) { lastF = TheGameLogic->getFrame(); Player *lp = ThePlayerList->getLocalPlayer(); int n = 0, uc = 0; for (Object *o = TheGameLogic->getFirstObject(); o; o = o->getNextObject()) if (o->getControllingPlayer() == lp) { ++n; if (o->testStatus(OBJECT_STATUS_UNDER_CONSTRUCTION)) ++uc; } printf("[um] local player index %d '%ls' type %s money %u objects %d (under construction %d) slot %d\n", lp->getPlayerIndex(), lp->getPlayerDisplayName().str(), lp->getPlayerType() == PLAYER_COMPUTER ? "cpu" : "human", lp->getMoney()->countMoney(), n, uc, slot); } }
 	static int centeredFor = -2;
+	if (slot < 0) centeredFor = -2;   // watching: the next seat gets the camera again
 	if (slot == applied && slot >= 0 && centeredFor != slot)
 	{	// the base arrives with the server's bind command, a few frames after the seat: look at it as soon as it exists
 		Player *me = ThePlayerList->getLocalPlayer(); Object *first = NULL;
 		for (Object *o = TheGameLogic->getFirstObject(); o && me; o = o->getNextObject()) if (o->getControllingPlayer() == me) { if (!first) first = o; if (o->isKindOf(KINDOF_COMMANDCENTER)) { first = o; break; } }
 		if (first) { Coord3D pos = *first->getPosition(); TheTacticalView->lookAt(&pos); centeredFor = slot; }
 	}
+	if (const char *te = getenv("UM_TEST_EXIT_FRAME"))
+	{	// testing aid: send what the game menu's Exit sends, once the world has run that many frames
+		static bool sent = false; if (!sent && TheGameLogic->getFrame() >= (unsigned)atoi(te)) { sent = true; printf("[um] client: test exit at frame %u\n", TheGameLogic->getFrame()); TheMessageStream->appendMessage(GameMessage::MSG_CLEAR_GAME_DATA); }
+	}
 	if (const char *cam = getenv("UM_CAMERA_AT"))
 	{	// testing aid: UM_CAMERA_AT=x,y[,frame] moves the camera there once the world has run that many frames (default 300)
 		static bool done = false; float cx = 0, cy = 0; unsigned at = 300;
 		if (!done && sscanf(cam, "%f,%f,%u", &cx, &cy, &at) >= 2 && TheGameLogic->getFrame() >= at) { Coord3D pos; pos.x = cx; pos.y = cy; pos.z = TheTerrainLogic->getGroundHeight(cx, cy); TheTacticalView->lookAt(&pos); done = true; printf("[um] client: camera to (%.0f,%.0f)\n", cx, cy); }
 	}
-	if (slot == applied) return;
 	Player *p = NULL;
 	if (slot >= 0) { char nm[32]; sprintf(nm, "player%d", slot); p = ThePlayerList->findPlayerWithNameKey(TheNameKeyGenerator->nameToKey(nm)); }
 	else p = ThePlayerList->findPlayerWithNameKey(TheNameKeyGenerator->nameToKey("ReplayObserver"));
 	if (!p) return;
+	// a snapshot reload (scheduled epoch) rebuilds the player list with the default local player: hand control back to this seat, camera where it was
+	const bool reload = slot == applied;
+	if (reload && ThePlayerList->getLocalPlayer() == p) return;
 	applied = slot;
 	ThePlayerList->setLocalPlayer(p);
 	TheInGameUI->deselectAllDrawables();
@@ -129,6 +137,7 @@ static void umClientTick()
 	TheControlBar->initSpecialPowershortcutBar(p);
 	TheControlBar->setControlBarSchemeByPlayer(p);
 	TheGameClient->updateFakeDrawables();
+	if (reload) { printf("[um] client: control handed back after a world snapshot reload\n"); return; }
 	if (slot >= 0 && TheGameInfo && TheGameInfo->getSlot(slot))
 	{
 		AsciiString way; way.format("Player_%d_Start", TheGameInfo->getSlot(slot)->getStartPos() + 1);

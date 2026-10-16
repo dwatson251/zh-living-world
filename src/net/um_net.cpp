@@ -21,6 +21,8 @@
 #include "Common/RandomValue.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/TerrainLogic.h"
+#include "GameClient/View.h"
+#include "net/um_economy.h"
 #include "GameLogic/AI.h"
 #include "GameLogic/AIPathfind.h"
 #include "GameLogic/Object.h"
@@ -54,9 +56,9 @@ struct Rd {
 	std::string str() { unsigned n = u32(); if (bad || p + n > e) { bad = true; return std::string(); } std::string s(p, n); p += n; return s; }
 };
 
-enum { T_HELLO = 1, T_WORLD, T_FRAME, T_ADVANCE, T_CMD, T_CRC, T_CRCRESULT, T_EPOCH, T_WELCOME, T_KICK, T_RENT };
+enum { T_HELLO = 1, T_WORLD, T_FRAME, T_ADVANCE, T_CMD, T_CRC, T_CRCRESULT, T_EPOCH, T_WELCOME, T_KICK, T_RENT, T_QUEUE, T_JOIN };
 const unsigned UM_MAGIC = 0x574C4D55; // 'UMLW'
-const unsigned UM_VERSION = 5;   // 4: spawn protection (Player state in snapshots), T_RENT; 5: city maps (map references in snapshots, spawn spots in binds, 32-bit pathfinder zones)
+const unsigned UM_VERSION = 6;   // 4: spawn protection (Player state in snapshots), T_RENT; 5: city maps (map references in snapshots, spawn spots in binds, 32-bit pathfinder zones); 6: spectators (hello flag, T_JOIN / T_QUEUE)
 static const unsigned UM_WORLD_FILE_MAGIC = 0x31574d55;   // "UMW1": world.bin written with the speed field
 
 bool isNetCommand(const GameMessage *m)
@@ -178,6 +180,22 @@ static void umRestartClient(const char *why)
 	MessageBoxA(NULL, msg, "Living World", MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);
 	ExitProcess(1);
 }
+// The music and the camera survive a world snapshot reload (a scheduled epoch): the reload restarts the map's music from the top and resets the view.
+struct UmClientScene { bool view, music; Coord3D pos; Real angle, pitch, zoom; AsciiString track; unsigned ms; };
+static UmClientScene umSaveScene()
+{
+	UmClientScene sc; sc.view = sc.music = false; sc.ms = 0;
+	extern bool UmMusicSave(AsciiString *, unsigned *);
+	sc.music = UmMusicSave(&sc.track, &sc.ms);
+	if (TheTacticalView) { TheTacticalView->getPosition(&sc.pos); sc.angle = TheTacticalView->getAngle(); sc.pitch = TheTacticalView->getPitch(); sc.zoom = TheTacticalView->getZoom(); sc.view = true; }
+	return sc;
+}
+static void umRestoreScene(const UmClientScene &sc)
+{
+	extern void UmMusicResume(const AsciiString &, unsigned);
+	if (sc.music) UmMusicResume(sc.track, sc.ms);
+	if (sc.view && TheTacticalView) { TheTacticalView->lookAt(&sc.pos); TheTacticalView->setAngle(sc.angle); TheTacticalView->setPitch(sc.pitch); TheTacticalView->setZoom(sc.zoom); }
+}
 static bool umLoadSnapshotFile(const char *leaf)
 {
 	UmLoadStage("Loading the world snapshot");
@@ -209,7 +227,8 @@ void UmApplyProfiles()
 		pl->umApplyProfile(p.tmpl >= 0 ? ThePlayerTemplateStore->getNthPlayerTemplate(p.tmpl) : NULL, p.rgb, name);
 	}
 }
-std::string gUmKickReason; DWORD gUmKickTick = 0; bool gUmHasUi = false;   // the graphical client shows the reason for a few seconds before it closes
+std::string gUmKickReason; DWORD gUmKickTick = 0; bool gUmHasUi = false, gUmKickFatal = false; std::string gUmNotice;   // fatal: this seat was taken by a newer connection, so close; otherwise the player was defeated and keeps watching
+//   // the graphical client shows the reason for a few seconds before it closes
 static std::vector<bool> gInertSlots;
 bool UmIsInertSlot(int slot) { return slot >= 0 && slot < (int)gInertSlots.size() && gInertSlots[slot]; }
 static bool gUmWorldPending = false;   // set when this client asks for the world; cleared when GameLogic really starts it (fresh or from a snapshot)
@@ -246,15 +265,15 @@ void UmStartWorld(const UmWorldDesc &w)
 // ---------------------------------------------------------------------------------------------------------------------
 struct UmConn
 {
-	SOCKET s; std::string in, out; bool hello; bool live; std::string name; std::string nick, faction; unsigned rgb; int id; int slot; unsigned boundFrame; unsigned cmdsThisTick;
-	UmConn() : s(INVALID_SOCKET), hello(false), live(false), rgb(0), id(0), slot(-1), boundFrame(0), cmdsThisTick(0) {}
+	SOCKET s; std::string in, out; bool hello; bool live; std::string name; std::string nick, faction; unsigned rgb; int id; int slot; unsigned boundFrame; unsigned cmdsThisTick; bool spectate; int sentQueuePos, sentQueueTotal;
+	UmConn() : s(INVALID_SOCKET), hello(false), live(false), rgb(0), id(0), slot(-1), boundFrame(0), cmdsThisTick(0), spectate(false), sentQueuePos(-2), sentQueueTotal(-2) {}
 };
 
 class UmNet : public NullNetworkBase
 {
 public:
 	UmNet(UmRole role) : m_role(role), m_listen(INVALID_SOCKET), m_sock(INVALID_SOCKET), m_ready(FALSE), m_started(false), m_limit(0), m_pendingCount(0),
-		m_lastFrame(0xffffffff), m_nextTick(0), m_tickFrac(0), m_nextConnId(1), m_mismatches(0), m_crcChecked(0), m_gotWorld(false), m_localDropped(0), m_uncapped(getenv("UM_UNCAPPED") != NULL), m_epochFrame(0), m_epochRaw(0), m_epochInterval(getenv("UM_EPOCH") ? (unsigned)atoi(getenv("UM_EPOCH")) : 0), m_needSnapshot(false), m_mySlot(-1), m_resumePending(false), m_resumeTarget(0), m_testDone(false), m_dropLog(0), m_aiNextJoin(0), m_nextDamage(0), m_startTick(GetTickCount()), m_supplyBucket(0xffffffffu), m_lotsLoaded(false), m_lotRng(GetTickCount()) { const char *d = getenv("UM_WORLD_DIR"); if (d) { m_dir = d; CreateDirectoryA(m_dir.c_str(), NULL); } }
+		m_lastFrame(0xffffffff), m_nextTick(0), m_tickFrac(0), m_nextConnId(1), m_mismatches(0), m_crcChecked(0), m_gotWorld(false), m_localDropped(0), m_uncapped(getenv("UM_UNCAPPED") != NULL), m_epochFrame(0), m_epochRaw(0), m_epochInterval(getenv("UM_EPOCH") ? (unsigned)atoi(getenv("UM_EPOCH")) : 0), m_needSnapshot(false), m_mySlot(-1), m_queuePos(0), m_queueTotal(0), m_everSeated(false), m_resumePending(false), m_resumeTarget(0), m_testDone(false), m_dropLog(0), m_aiNextJoin(0), m_nextDamage(0), m_startTick(GetTickCount()), m_supplyBucket(0xffffffffu), m_econBucket(0xffffffffu), m_lotsLoaded(false), m_lotRng(GetTickCount()) { const char *d = getenv("UM_WORLD_DIR"); if (d) { m_dir = d; CreateDirectoryA(m_dir.c_str(), NULL); } }
 
 	// --- lifecycle
 	virtual void init(void) {}
@@ -287,6 +306,11 @@ public:
 		if (const char *bindTo = getenv("UM_BIND")) { if (*bindTo && strcmp(bindTo, "0.0.0.0") != 0) a.sin_addr.s_addr = inet_addr(bindTo); }   // host: the address to listen on
 		if (bind(m_listen, (sockaddr *)&a, sizeof(a)) != 0 || listen(m_listen, 64) != 0) { printf("[um] server: cannot listen on port %d (err %d)\n", port, WSAGetLastError()); m_listen = INVALID_SOCKET; return; }
 		printf("[um] server: listening on port %d\n", port); m_startTick = GetTickCount();
+		printf("[um] server settings: spawn protection %u s (not renewed for %u s after it ends), rent every %u s (%u free cycle(s), fixed %u, %u%% of value, floor %u, damage %u per mille per stack),"
+			" absent bases kept %u s, start cash %u, knock-out bonus %u%% + %u within %u s, spawn deadzone %u units, AI keeps %u lot(s) free, game speed %u\n",
+			envU("UM_IMMUNE_FRAMES", 5400) / 30, envU("UM_IMMUNE_COOLDOWN_FRAMES", 27000) / 30, envU("UM_RENT_FRAMES", 27000) / 30, envU("UM_RENT_GRACE", 1), envU("UM_RENT_FIXED", 0), envU("UM_RENT_PCT", 5),
+			envU("UM_RENT_FLOOR", 500), envU("UM_RENT_DMG_PERMILLE", 10), envU("UM_ABSENT_FRAMES", 54000) / 30, envU("UM_START_CASH", 10000), envU("UM_LASTHIT_PCT", 10), envU("UM_LASTHIT", 10000),
+			envU("UM_LASTHIT_WINDOW", 9000) / 30, envU("UM_SPAWN_DEADZONE", 2000), envU("UM_AI_RESERVE_LOTS", 4), envU("UM_GAME_SPEED", 30));
 		if (getenv("UM_RESUME") && tryResume()) { m_started = true; return; }
 		UmStartWorld(m_world); m_started = true;
 	}
@@ -306,6 +330,7 @@ public:
 		char keybuf[64]; sprintf(keybuf, "key-%lu", (unsigned long)GetTickCount()); const char *key = getenv("UM_KEY") ? getenv("UM_KEY") : keybuf;
 		Wr h; h.u32(UM_MAGIC); h.u32(UM_VERSION); h.str(key);
 		h.str(getenv("UM_NAME") ? getenv("UM_NAME") : ""); h.str(getenv("UM_FACTION") ? getenv("UM_FACTION") : ""); h.u32(getenv("UM_COLOR") ? (unsigned)strtoul(getenv("UM_COLOR"), NULL, 16) : 0);
+		h.u8(getenv("UM_SPECTATE") && atoi(getenv("UM_SPECTATE")) ? 1 : 0);   // watch only: no seat until the player asks to join the queue
 		Wr f; frameMsg(f, T_HELLO, h.b); sendAll(m_sock, f.b);
 		printf("[um] client: connected to %s:%d\n", host, port); UmLoadStage("Connected, waiting for the world");
 	}
@@ -350,6 +375,7 @@ public:
 			static bool flip = false; flip = !flip; GameMessage *m = newInstance(GameMessage)(GameMessage::MSG_ENABLE_RETALIATION_MODE); m->appendIntegerArgument(0); m->appendBooleanArgument(flip);
 			Wr w; putMessage(w, m); Wr fr; frameMsg(fr, T_CMD, w.b); sendAll(m_sock, fr.b); m->deleteInstance();
 		}
+		if (m_role == UM_ROLE_CLIENT && m_mySlot < 0 && m_queuePos == 0 && getenv("UM_TEST_JOIN_FRAME") && f >= (unsigned)atoi(getenv("UM_TEST_JOIN_FRAME")) && !m_everSeated) requestJoin();   // testing aid: a spectator asks for a seat
 		if (m_role == UM_ROLE_CLIENT && f % 30 == 0 && m_sock != INVALID_SOCKET)
 		{
 			Wr w; w.u32(f); w.u32((unsigned)TheGameLogic->getCRC(CRC_RECALC)); Wr fr; frameMsg(fr, T_CRC, w.b); sendAll(m_sock, fr.b);
@@ -379,9 +405,11 @@ private:
 	std::map<unsigned, std::pair<unsigned, std::string> > m_epochInbox;                              // client: snapshots waiting for their frame
 	std::map<unsigned, std::string> m_executed;                                                      // client: batches already run (kept so a late epoch can be replayed over)
 	bool m_needSnapshot;                                                                              // client: world will arrive as a snapshot
-	int m_mySlot; UmRentInfo m_rentInfo;
+	int m_mySlot; UmRentInfo m_rentInfo; int m_queuePos, m_queueTotal; bool m_everSeated;
 public:
 	int mySlot() const { return m_mySlot; }
+	void queueInfo(int *pos, int *total) const { *pos = m_queuePos; *total = m_queueTotal; }
+	void requestJoin() { if (m_role == UM_ROLE_CLIENT && m_sock != INVALID_SOCKET && m_mySlot < 0) { Wr w; w.u8(1); Wr f; frameMsg(f, T_JOIN, w.b); sendAll(m_sock, f.b); if (m_queuePos <= 0) m_queuePos = -1; printf("[um] client: asked to join the queue\n"); } }
 	const UmRentInfo &rentInfo() const { return m_rentInfo; }
 	unsigned worldSpeed() const { return (unsigned)m_world.speed; }
 	bool catchUp(unsigned *frame, unsigned *live) const { if (m_role != UM_ROLE_CLIENT || !TheGameLogic || !TheGameLogic->isInGame()) return false; *frame = TheGameLogic->getFrame(); *live = m_limit; return m_limit > *frame + 150; }
@@ -487,7 +515,18 @@ private:
 			sprintf(b, "%s{\"slot\":%d,\"name\":\"%s\",\"faction\":\"%s\",\"online\":%s,\"absentSeconds\":%u,\"missedRent\":%d,\"expiring\":%s,\"nextRentFrame\":%u}", first ? "" : ",", r.slot, jsonEsc(nick).c_str(), jsonEsc(fac).c_str(), online ? "true" : "false", absentFor, r.missed, r.expiring ? "true" : "false", r.nextRent);
 			o += b; first = false;
 		}
-		o += "]}";
+		o += "]";
+		{	// the money pools and GDP of the three faction currencies
+			static const char *names[] = { "usd", "cny", "ils" }; o += ",\"economy\":{"; bool ef = true;
+			sprintf(b, "\"pools\":%s,\"inflation\":%s", envU("UM_POOLS", 1) ? "true" : "false", envU("UM_INFLATION", 0) ? "true" : "false"); o += b;
+			for (int c = 0; c < UM_CUR_COUNT; ++c)
+			{
+				UmEconInfo ei; if (!UmEconGetInfo(c, &ei)) continue;
+				sprintf(b, ",\"%s\":{\"pool\":%d,\"depots\":%d,\"derricks\":%d,\"other\":%d,\"gdp\":%d,\"priceMultiplier\":%.2f}", names[c], ei.pool, ei.budget[0], ei.budget[1], ei.budget[2], ei.minted, ei.multPermille / 1000.0); o += b; ef = false;
+			}
+			o += "}";
+		}
+		o += "}";
 		atomicWrite("status.json", o);
 	}
 	size_t countSlots(const char *name) const { size_t n = 0; for (size_t i = 0; i < m_world.slots.size(); ++i) if (m_world.slots[i].name == name) ++n; return n; }
@@ -518,6 +557,12 @@ private:
 			m_replay[fr] = log.substr(off + 8, len - 4); off += 4 + len;
 		}
 		loadRecs();
+		{	// settings changed since the world was saved: players who have not paid rent yet follow the current rent interval and grace
+			unsigned RENT = envU("UM_RENT_FRAMES", 27000), GRACE = envU("UM_RENT_GRACE", 1); int n = 0;
+			for (std::map<std::string, Rec>::iterator it = m_recs.begin(); it != m_recs.end(); ++it)
+				if (it->second.paid == 0 && it->second.missed == 0) { unsigned nr = it->second.bound + (1 + GRACE) * RENT; if (nr != it->second.nextRent) { it->second.nextRent = nr; ++n; } }
+			if (n) printf("[um] server: %d player(s) still in their rent grace follow the current rent settings\n", n);
+		}
 		if (!umWriteFile(umSavePath("um_epoch.sav"), raw)) return false;
 		extern int UmSynthStarts; UmSynthStarts = m_world.synthStarts;
 		m_resumePending = true;
@@ -632,6 +677,16 @@ private:
 	void queueUnbind(int slot) { GameMessage *m = mk(GameMessage::MSG_UM_UNBIND_PLAYER); m->appendIntegerArgument(slot); queueCmd(m); }
 	void queueGrant(int slot, int amount) { GameMessage *m = mk(GameMessage::MSG_UM_GRANT_CASH); m->appendIntegerArgument(slot); m->appendIntegerArgument(amount); queueCmd(m); }
 	void queueCharge(int slot, int amount) { GameMessage *m = mk(GameMessage::MSG_UM_CHARGE); m->appendIntegerArgument(slot); m->appendIntegerArgument(amount); queueCmd(m); }
+	// economy cycle: the server's pool/inflation settings go to every replica as one command (the sim then splits the pools and sets the price multiplier)
+	void queueEcon()
+	{
+		GameMessage *m = mk(GameMessage::MSG_UM_ECON_TICK);
+		m->appendIntegerArgument((int)envU("UM_POOLS", 1)); m->appendIntegerArgument((int)envU("UM_INFLATION", 0));
+		m->appendIntegerArgument((int)envU("UM_POOL_DEPOT", 60)); m->appendIntegerArgument((int)envU("UM_POOL_DERRICK", 10)); m->appendIntegerArgument((int)envU("UM_POOL_OTHER", 30));
+		m->appendIntegerArgument((int)envU("UM_POOL_SEED", 50000)); m->appendIntegerArgument((int)envU("UM_POOL_JOIN", 2000));
+		m->appendIntegerArgument((int)envU("UM_GDP_BASELINE", 200000)); m->appendIntegerArgument((int)envU("UM_INFLATION_MAX", 300) * 10); m->appendIntegerArgument((int)envU("UM_DEFLATION_PERMILLE", 20));
+		queueCmd(m);
+	}
 	void queueRefill(int cash) { GameMessage *m = mk(GameMessage::MSG_UM_REFILL_SUPPLY); m->appendIntegerArgument(cash); queueCmd(m); }
 	void queueImmune(int slot, int untilFrame) { GameMessage *m = mk(GameMessage::MSG_UM_IMMUNE); m->appendIntegerArgument(slot); m->appendIntegerArgument(untilFrame); queueCmd(m); }
 	// spawn protection for a connecting player (server setting UM_IMMUNE_FRAMES; 0 = off). Reconnecting does not renew it until UM_IMMUNE_COOLDOWN_FRAMES after the last one ended.
@@ -652,7 +707,7 @@ private:
 	{
 		if (c.slot < 0 || !isNetCommand(m)) return false;
 		GameMessage::Type t = m->getType();
-		if (t >= GameMessage::MSG_UM_BIND_PLAYER && t <= GameMessage::MSG_UM_REFILL_SUPPLY) return false;      // server-only
+		if (t >= GameMessage::MSG_UM_BIND_PLAYER && t <= GameMessage::MSG_UM_ECON_TICK) return false;      // server-only
 		if (t == GameMessage::MSG_LOGIC_CRC || t == GameMessage::MSG_SET_REPLAY_CAMERA || t == GameMessage::MSG_SELF_DESTRUCT || t >= GameMessage::MSG_BEGIN_DEBUG_NETWORK_MESSAGES) return false;
 		Player *p = playerForSlot(c.slot); if (!p) return false;
 		if (++c.cmdsThisTick > 64) return false;
@@ -662,6 +717,15 @@ private:
 		Wr w; putMessage(w, m); m_pending += w.b; ++m_pendingCount; return true;
 	}
 
+	int queuePos(const std::string &key) const { for (size_t i = 0; i < m_queue.size(); ++i) if (m_queue[i] == key) return (int)i + 1; return 0; }
+	// tell a watching client where it stands in the queue (0 = not queued); only when it changed, unless forced
+	void sendQueueInfo(UmConn &c, bool force)
+	{
+		if (!c.live || c.slot >= 0) return;
+		int pos = queuePos(c.name), total = (int)m_queue.size();
+		if (!force && pos == c.sentQueuePos && total == c.sentQueueTotal) return;
+		c.sentQueuePos = pos; c.sentQueueTotal = total; Wr w; w.i32(pos); w.i32(total); sendMsg(c, T_QUEUE, w.b);
+	}
 	void freeSlotAndPromote(unsigned f)
 	{
 		while (!m_queue.empty() && freeHumanSlot() >= 0)
@@ -683,7 +747,7 @@ private:
 		Rec r; r.key = c.name; r.slot = slot; r.bound = f; r.nextRent = f + (1 + envU("UM_RENT_GRACE", 1)) * envU("UM_RENT_FRAMES", 27000);   // grace: this many full rent cycles are free (default 1)
 		m_recs[c.name] = r; m_slotKey[slot] = c.name; c.slot = slot; c.boundFrame = f; saveRecs();
 		int tmpl = -1;   // the occupant's faction, if it is one the skirmish AI scripts and the starting base support
-		if (!c.faction.empty()) { int idx = ThePlayerTemplateStore->getTemplateNumByName(AsciiString(c.faction.c_str())); const PlayerTemplate *pt = idx >= 0 ? ThePlayerTemplateStore->getNthPlayerTemplate(idx) : NULL; if (pt && !pt->isObserver() && (pt->getSide() == "America" || pt->getSide() == "China" || pt->getSide() == "GLA") && !pt->getStartingBuilding().isEmpty()) tmpl = idx; }
+		if (!c.faction.empty()) { int idx = ThePlayerTemplateStore->getTemplateNumByName(AsciiString(c.faction.c_str())); const PlayerTemplate *pt = idx >= 0 ? ThePlayerTemplateStore->getNthPlayerTemplate(idx) : NULL; if (pt && !pt->isObserver() && (pt->getBaseSide() == "America" || pt->getBaseSide() == "China" || pt->getBaseSide() == "GLA" || pt->getSide() == "America" || pt->getSide() == "China" || pt->getSide() == "GLA")   /* generals: side "ChinaTankGeneral", base side "China" */ && !pt->getStartingBuilding().isEmpty()) tmpl = idx; }
 		if (slot < (int)m_world.slots.size()) { m_world.slots[slot].profT = tmpl + 1; m_world.slots[slot].rgb = c.rgb; m_world.slots[slot].nick = c.nick; }
 		queueBind(slot, (int)envU("UM_START_CASH", 10000), tmpl, c.rgb, c.nick, lot);
 		grantImmunity(m_recs[c.name], f);
@@ -720,7 +784,7 @@ private:
 	// rent is the larger of a floor and a share of what the player owns, or a flat amount when UM_RENT_FIXED is set
 	int rentAmount(Player *p)
 	{
-		if (envU("UM_RENT_FIXED", 0) > 0) return (int)envU("UM_RENT_FIXED", 0);
+		if (envU("UM_RENT_FIXED", 0) > 0) return (int)(envU("UM_RENT_FIXED", 0) * UmEconCostMult(p));   // a flat rent follows inflation too; a value-based one does through the prices
 		long long value = 0; for (Object *o = TheGameLogic->getFirstObject(); o; o = o->getNextObject()) if (o->getControllingPlayer() == p) value += o->getTemplate()->calcCostToBuild(p);
 		int amount = (int)(value * (long long)envU("UM_RENT_PCT", 5) / 100); int floor = (int)envU("UM_RENT_FLOOR", 500);
 		return amount < floor ? floor : amount;
@@ -733,6 +797,7 @@ private:
 	void census(unsigned f)
 	{
 		rebuildPidSlot();
+		for (size_t i = 0; i < m_conns.size(); ++i) sendQueueInfo(m_conns[i], f % 300 == 0);   // spectators: queue position when it changes, and now and then in case it was lost
 		const unsigned ABSENT = envU("UM_ABSENT_FRAMES", 54000), COMBAT = envU("UM_COMBAT_FRAMES", 900), RENT = envU("UM_RENT_FRAMES", 27000), DMGINT = envU("UM_RENT_DMG_FRAMES", 300);
 		// humans: elimination, absence expiry
 		std::vector<std::string> keys; for (std::map<std::string, Rec>::iterator it = m_recs.begin(); it != m_recs.end(); ++it) keys.push_back(it->first);
@@ -763,6 +828,11 @@ private:
 			if (r.amount == 0 || f >= r.amountAt + 300) { r.amount = rentAmount(p); r.amountAt = f; }
 			Wr w; w.u32(f); w.u32(r.nextRent); w.u32(RENT); w.i32(r.missed); w.i32(r.amount); w.u32(r.immuneUntil); w.u32(r.paid); w.u32(r.bound + envU("UM_RENT_GRACE", 1) * RENT); w.u8(r.expiring ? 1 : 0);
 			sendMsg(*c, T_RENT, w.b);
+		}
+		{	// economy: configure and split the pools at the start and then once per cycle
+			unsigned every = envU("UM_ECON_FRAMES", envU("UM_RENT_FRAMES", 27000)); if (!every) every = 27000;
+			unsigned bucket = f / every;
+			if (m_econBucket == 0xffffffffu || bucket != m_econBucket) { m_econBucket = bucket; queueEcon(); }
 		}
 		// slow restocking of every supply dock (server setting: cash per dock and interval; 0 = never)
 		{
@@ -802,6 +872,7 @@ private:
 			for (std::map<std::string, Rec>::iterator it = m_recs.begin(); it != m_recs.end() && !m_testDone; ++it)
 				if (f >= it->second.bound + (unsigned)atoi(td)) { m_testDone = true; Player *p = playerForSlot(it->second.slot); if (p) { if (Player *ai = playerForSlot(1)) gLastKill[p->getPlayerIndex()] = std::make_pair(ai->getPlayerIndex(), f); queueSelfDestruct(it->second.slot); printf("[um] server: test self-destruct for slot %d at frame %u\n", it->second.slot, f); } }
 	}
+	unsigned m_econBucket;   // server: the rent-cycle number of the last economy command
 	std::map<int, int> m_pidSlot;   // player index -> slot, refreshed by the census (cheap combat attribution)
 	void rebuildPidSlot() { m_pidSlot.clear(); for (int i = 0; i < MAX_SLOTS; ++i) if (Player *p = playerForSlot(i)) m_pidSlot[p->getPlayerIndex()] = i; }
 public:
@@ -893,7 +964,7 @@ private:
 		if (type == T_HELLO)
 		{
 			if (r.u32() != UM_MAGIC || r.u32() != UM_VERSION) { printf("[um] server: client %d bad hello\n", c.id); return false; }
-			c.name = r.str(); c.nick = r.str(); c.faction = r.str(); c.rgb = r.u32() & 0xffffff; c.hello = true;
+			c.name = r.str(); c.nick = r.str(); c.faction = r.str(); c.rgb = r.u32() & 0xffffff; c.spectate = r.u8() != 0; c.hello = true;
 			{ std::string clean; for (size_t k = 0; k < c.nick.size() && clean.size() < 16; ++k) { unsigned char ch = (unsigned char)c.nick[k]; if (ch >= 32 && ch < 127) clean += (char)ch; } c.nick = clean; }
 			Wr w; putWorld(w, m_worldEpoch); w.u8(m_epochFrame ? 1 : 0); Wr f; frameMsg(f, T_WORLD, w.b); c.out += f.b;
 			if (m_epochFrame) { Wr e; e.u32(m_epochFrame); e.u32(m_epochRaw); e.b += m_epochZ; Wr fe; frameMsg(fe, T_EPOCH, e.b); c.out += fe.b; }
@@ -901,7 +972,8 @@ private:
 			Wr a; a.u32(TheGameLogic ? TheGameLogic->getFrame() : 0); Wr fa; frameMsg(fa, T_ADVANCE, a.b); c.out += fa.b;
 			c.live = true; printf("[um] server: client %d '%s' admitted at frame %u (replaying %d command batches)\n", c.id, c.name.c_str(), TheGameLogic ? TheGameLogic->getFrame() : 0, (int)m_log.size());
 			// identity: the hello name is the player's secret key; the same key gets the same slot (and base) back
-			if (c.name.size() >= 2 && c.name[0] != '~')
+			// a spectator (chose to watch, or the world is full) gets no seat until it asks for one (T_JOIN); a returning player keeps the base they left
+			if (c.name.size() >= 2 && c.name[0] != '~' && !c.spectate)
 			{
 				unsigned f = TheGameLogic ? TheGameLogic->getFrame() : 0;
 				std::map<std::string, Rec>::iterator ks = m_recs.find(c.name);
@@ -912,10 +984,26 @@ private:
 					printf("[um] server: client %d bound to slot %d (returning player)\n", c.id, c.slot);
 				}
 				else if (freeHumanSlot() >= 0) bindHuman(c, f);
-				else { m_queue.push_back(c.name); printf("[um] server: client %d queued (position %d, world full)\n", c.id, (int)m_queue.size()); }
+				else { c.spectate = true; printf("[um] server: client %d is watching (world full)\n", c.id); }
 			}
+			else if (c.spectate) printf("[um] server: client %d is watching (asked to spectate)\n", c.id);
 			{ Wr ww; ww.i32(c.slot); sendMsg(c, T_WELCOME, ww.b); }
 			flush(c);
+		}
+		else if (type == T_JOIN && c.hello && c.slot < 0 && c.name.size() >= 2 && c.name[0] != '~')
+		{
+			unsigned f = TheGameLogic ? TheGameLogic->getFrame() : 0; c.spectate = false;
+			std::map<std::string, Rec>::iterator ks = m_recs.find(c.name);
+			if (ks != m_recs.end())
+			{	// their base is still there (they left it, then came back as a spectator): take it back
+				c.slot = ks->second.slot; c.boundFrame = ks->second.bound; ks->second.left = 0; saveRecs(); grantImmunity(ks->second, f);
+				printf("[um] server: client %d bound to slot %d (returning player, from the spectators)\n", c.id, c.slot);
+				Wr ww; ww.i32(c.slot); sendMsg(c, T_WELCOME, ww.b);
+			}
+			else if (queuePos(c.name) > 0) { /* already waiting */ }
+			else if (freeHumanSlot() >= 0 && m_queue.empty()) bindHuman(c, f);
+			else { m_queue.push_back(c.name); printf("[um] server: client %d queued (position %d)\n", c.id, (int)m_queue.size()); }
+			sendQueueInfo(c, true); flush(c);
 		}
 		else if (type == T_CMD && c.hello)
 		{
@@ -956,8 +1044,10 @@ private:
 				std::string raw;
 				static bool failOnce = getenv("UM_TEST_FAIL_EPOCH") != NULL;   // test hook: the first in-game epoch load "fails"
 				bool forceFail = failOnce && inGame; if (forceFail) failOnce = false;
+				UmClientScene scene = umSaveScene(); const bool live = inGame;
 				if (!forceFail && umUnzip(it->second.second, it->second.first, raw) && umWriteFile(umSavePath("um_epoch_in.sav"), raw) && umLoadSnapshotFile("um_epoch_in.sav"))
 				{
+					if (live) umRestoreScene(scene);   // a joiner has no music or view to keep yet
 					printf("[um] client: loaded epoch snapshot for frame %u (now at frame %u)\n", it->first, TheGameLogic->getFrame()); m_needSnapshot = false;
 					for (std::map<unsigned, std::string>::iterator e = m_executed.begin(); e != m_executed.end(); ) { if (e->first < it->first) m_executed.erase(e++); else ++e; }
 				}
@@ -967,11 +1057,12 @@ private:
 			else if (inGame && it->first < cur)
 			{	// the world already ran past the epoch frame (for example while this client was busy loading a big map when the epoch arrived):
 				// load the epoch like the server did, then run the batches since it again, so this client ends up on the server's re-based world
-				unsigned ef = it->first; std::string raw;
+				unsigned ef = it->first; std::string raw; UmClientScene scene = umSaveScene();
 				bool ok = umUnzip(it->second.second, it->second.first, raw) && umWriteFile(umSavePath("um_epoch_in.sav"), raw) && umLoadSnapshotFile("um_epoch_in.sav");
 				m_epochInbox.erase(it);
 				if (ok)
 				{
+					umRestoreScene(scene);
 					int n = 0; for (std::map<unsigned, std::string>::iterator e = m_executed.begin(); e != m_executed.end(); ++e) if (e->first >= ef) { m_inbox[e->first] = e->second; ++n; }
 					m_executed.clear();
 					printf("[um] client: late epoch snapshot for frame %u loaded (world was at frame %u); replaying %d batches\n", ef, cur, n);
@@ -1016,14 +1107,18 @@ private:
 		}
 		else if (type == T_EPOCH) { unsigned f = r.u32(), raw = r.u32(); m_epochInbox[f] = std::make_pair(raw, payload.substr(8)); printf("[um] client: epoch snapshot for frame %u received (world at frame %u, in game %d)\n", f, TheGameLogic ? TheGameLogic->getFrame() : 0, TheGameLogic && TheGameLogic->isInGame() ? 1 : 0); }
 		else if (type == T_RENT) { UmRentInfo ri; ri.valid = true; ri.serverFrame = r.u32(); ri.nextRent = r.u32(); ri.interval = r.u32(); ri.missed = r.i32(); ri.amount = r.i32(); ri.immuneUntil = r.u32(); ri.paid = r.u32(); ri.graceEnd = r.u32(); ri.expiring = r.u8() != 0; if (!r.bad) m_rentInfo = ri; }
-		else if (type == T_WELCOME) { m_mySlot = r.i32(); printf("[um] client: welcome, slot %d\n", m_mySlot); }
+		else if (type == T_WELCOME) { m_mySlot = r.i32(); printf("[um] client: welcome, slot %d\n", m_mySlot); if (m_mySlot >= 0) { m_everSeated = true; m_queuePos = 0; gUmKickTick = 0; gUmKickReason.clear(); } }
+		else if (type == T_QUEUE) { int pos = r.i32(), total = r.i32(); if (!r.bad) { m_queuePos = pos; m_queueTotal = total; } }
 		else if (type == T_KICK) { std::string why = r.str(); printf("[um] client: KICKED (%s)\n", why.c_str());
-			if (gUmHasUi && m_mySlot < 0 && !getenv("UM_STAY_AFTER_KICK"))
+			const bool worldShown = TheGameLogic && TheGameLogic->isInGame() && TheGameLogic->getFrame() > 0;
+			if (gUmHasUi && m_mySlot < 0 && !m_everSeated && !worldShown && !getenv("UM_STAY_AFTER_KICK"))
 			{	// refused before ever getting a seat (for example: no free spawn spot): the world is not on screen yet, so say why in a box
 				fflush(stdout); std::string msg = why + "\n\nThe server is still running; you can try to join again later.";
 				MessageBoxA(NULL, msg.c_str(), "Living World", MB_OK | MB_ICONINFORMATION | MB_TOPMOST | MB_SETFOREGROUND); ExitProcess(0);
 			}
-			m_mySlot = -1; gUmKickReason = why; gUmKickTick = GetTickCount() | 1; if (!gUmHasUi && !getenv("UM_STAY_AFTER_KICK")) { fflush(stdout); ExitProcess(0); } }
+			const bool wasSeated = m_mySlot >= 0; m_mySlot = -1; m_queuePos = 0;
+			if (!wasSeated && !gUmKickFatal && gUmHasUi) { gUmNotice = why; return; }   // a join that did not work out (for example no free spawn spot): say so, keep watching
+			gUmKickReason = why; gUmKickFatal = why.compare(0, 8, "replaced") == 0; gUmKickTick = GetTickCount() | 1; if (!gUmHasUi && !getenv("UM_STAY_AFTER_KICK")) { fflush(stdout); ExitProcess(0); } }
 		else if (type == T_FRAME) { unsigned f = r.u32(); m_inbox[f] = payload.substr(4); }   // keep count+messages
 		else if (type == T_ADVANCE) { unsigned l = r.u32(); if (l > m_limit) m_limit = l; }
 		else if (type == T_CRCRESULT) { r.u32(); if (r.u8()) ++m_crcChecked; else { ++m_mismatches; printf("[um] client: server says our CRC DIVERGED\n"); } }
@@ -1050,6 +1145,8 @@ void UmNetPreFrame(unsigned frame)
 	if (TheGameLogic && TheGameLogic->isInGame()) TheUmNet->execBatch(frame);
 }
 unsigned UmNetSpeed() { return TheUmNet ? TheUmNet->worldSpeed() : 30; }
+void UmNetRequestJoin() { if (TheUmNet) TheUmNet->requestJoin(); }
+void UmNetQueueInfo(int *pos, int *total) { *pos = *total = 0; if (TheUmNet) TheUmNet->queueInfo(pos, total); }
 bool UmNetRentInfo(UmRentInfo *out) { if (!TheUmNet || !TheUmNet->rentInfo().valid) return false; *out = TheUmNet->rentInfo(); return true; }
 
 void UmNoteCombatImpl(Int a, Int b) { if (TheUmNet) TheUmNet->noteCombat(a, b); }

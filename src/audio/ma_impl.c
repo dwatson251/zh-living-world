@@ -63,6 +63,13 @@ void uma_set_volume(UmaSound *s, float v) { if (s && s->ready) ma_sound_set_volu
 void uma_set_pan(UmaSound *s, float p) { if (s && s->ready) ma_sound_set_pan(&s->snd, p); }
 void uma_set_pitch(UmaSound *s, float p) { if (s && s->ready && p > 0.05f) ma_sound_set_pitch(&s->snd, p); }
 int uma_finished(UmaSound *s) { return s && s->ready && !s->loop && ma_sound_at_end(&s->snd); }
+void uma_seek_ms(UmaSound *s, unsigned ms)
+{
+	ma_uint32 rate = 0;
+	if (!s || !s->ready) return;
+	if (ma_sound_get_data_format(&s->snd, NULL, NULL, &rate, NULL, 0) != MA_SUCCESS || rate == 0) return;
+	ma_sound_seek_to_pcm_frame(&s->snd, (ma_uint64)ms * rate / 1000);
+}
 unsigned uma_cursor_ms(UmaSound *s)
 {
 	float c = 0;

@@ -13,6 +13,9 @@
 #include "Common/NameKeyGenerator.h"
 #include "GameLogic/GameLogic.h"
 #include "net/um_net.h"
+#include "net/um_economy.h"
+#include "Common/Player.h"
+#include "Common/PlayerList.h"
 #include <stdio.h>
 #include <string>
 #include <wchar.h>
@@ -46,8 +49,63 @@ void bar(Int x, Int y, Int w, Int h, Real filled, Color fill, Color back)
 }
 }
 
+// ---- spectating: the permanent top-left note, and the "Defeated" splash a knocked-out player sees for a few seconds ----
+extern std::string gUmKickReason; extern DWORD gUmKickTick; extern bool gUmKickFatal;
+int gUmTopReserve = 0;   // rows of the top-left message stack taken by the spectator note (InGameUI::postDraw starts its messages below it)
+namespace
+{
+DisplayString *gSpecLine = NULL, *gSplashBig = NULL, *gSplashSmall = NULL;
+void drawSpectator(void)
+{
+	gUmTopReserve = 0;
+	if (!TheDisplay || !TheDisplayStringManager || !TheInGameUI || UmNetMySlot() >= 0) return;
+	unsigned cf, cl; if (UmNetCatchUp(&cf, &cl)) return;
+	const Color shadow = GameMakeColor(0, 0, 0, 255);
+	if (!gSpecLine)
+	{
+		gSpecLine = TheDisplayStringManager->newDisplayString();
+		gSpecLine->setFont(TheFontLibrary->getFont(TheInGameUI->umMessageFontName(), TheGlobalLanguageData->adjustFontSize(TheInGameUI->umMessagePointSize()), TheInGameUI->umMessageBold()));
+	}
+	int pos = 0, total = 0; UmNetQueueInfo(&pos, &total);
+	wchar_t t[96];
+	if (pos > 0) swprintf(t, 96, L"Spectator view, in the queue (%d of %d). Open Menu (Esc) to continue", pos, total);
+	else swprintf(t, 96, L"Spectator view, Open Menu (Esc) to Join");
+	gSpecLine->setText(UnicodeString(t));
+	Int tw = 0, th = 0; gSpecLine->getSize(&tw, &th);
+	gSpecLine->draw(10, 10, GameMakeColor(255, 235, 120, 255), shadow);
+	gUmTopReserve = th + 4;
+
+	if (gUmKickTick && !gUmKickFatal)
+	{
+		const DWORD age = GetTickCount() - gUmKickTick;
+		if (age < 4500)
+		{
+			const Int W = TheDisplay->getWidth(), H = TheDisplay->getHeight();
+			Real fade = age < 3800 ? 1.0f : 1.0f - (Real)(age - 3800) / 700.0f;
+			const int a = (int)(255 * fade);
+			if (!gSplashBig)
+			{
+				gSplashBig = TheDisplayStringManager->newDisplayString();
+				gSplashBig->setFont(TheFontLibrary->getFont(TheInGameUI->umMessageFontName(), TheGlobalLanguageData->adjustFontSize(54), TRUE));
+				gSplashSmall = TheDisplayStringManager->newDisplayString();
+				gSplashSmall->setFont(TheFontLibrary->getFont(TheInGameUI->umMessageFontName(), TheGlobalLanguageData->adjustFontSize(TheInGameUI->umMessagePointSize()), FALSE));
+			}
+			gSplashBig->setText(UnicodeString(L"DEFEATED"));
+			UnicodeString why; { const std::string &r = gUmKickReason; const char *msg = r == "expired" ? "Your base expired while you were away" : "Your base has fallen"; for (const char *c = msg; *c; ++c) why.concat((WideChar)(unsigned char)*c); }
+			gSplashSmall->setText(why);
+			Int bw, bh, sw, sh; gSplashBig->getSize(&bw, &bh); gSplashSmall->getSize(&sw, &sh);
+			const Int bandH = bh + sh + 40, y0 = H / 2 - bandH / 2;
+			TheDisplay->drawFillRect(0, y0, W, bandH, GameMakeColor(0, 0, 0, (int)(170 * fade)));
+			gSplashBig->draw((W - bw) / 2, y0 + 12, GameMakeColor(255, 70, 50, a), GameMakeColor(0, 0, 0, a));
+			gSplashSmall->draw((W - sw) / 2, y0 + 20 + bh, GameMakeColor(230, 230, 230, a), GameMakeColor(0, 0, 0, a));
+		}
+	}
+}
+}
+
 void UmDrawRentHud(void)
 {
+	drawSpectator();
 	if (getenv("UM_TEST_BAR") && TheControlBar && TheGameLogic)   // test hook: cycle the control bar stage (default, low, hidden) every 8 s
 	{
 		static unsigned lastStep = 0; unsigned stepNo = TheGameLogic->getFrame() / (8 * 30);
@@ -125,7 +183,7 @@ void UmDrawRentHud(void)
 	// the rent: the bar fills as the due time approaches, like a power recharging in reverse
 	clock(c, 24, (dueFrames + speed - 1) / speed);
 	if (grace) swprintf(t, 96, L"RENT (grace)  %ls", c);
-	else swprintf(t, 96, L"RENT  $%d  %ls", ri.amount, c);
+	else { UnicodeString sym; UmEconSymbol(ThePlayerList ? ThePlayerList->getLocalPlayer() : NULL, &sym); swprintf(t, 96, L"RENT  %ls%d  %ls", sym.str(), ri.amount, c); }
 	line(1)->setText(UnicodeString(t));
 	const Color rentColor = grace ? GameMakeColor(120, 230, 140, 255) : (dueFrames < 20u * speed ? GameMakeColor(255, 220, 80, 255) : GameMakeColor(255, 255, 255, 255));
 	line(1)->draw(x, y, rentColor, shadow);

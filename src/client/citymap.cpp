@@ -453,6 +453,7 @@ std::string leafNoExt(const std::string &p) { size_t s = p.find_last_of("\\/"); 
 bool mapRefMake(const char *mapPath, std::string *ref)
 {
 	std::string leaf = leafNoExt(mapPath); if (leaf.size() < 14 || _strnicmp(leaf.c_str(), "Living World ", 13) != 0) return false;   // the engine passes lower-case paths
+	for (int cut = 0; cut < 2; ++cut) { size_t u = leaf.find_last_of('_'); if (u == std::string::npos || u + 1 >= leaf.size() || leaf.find_first_not_of("0123456789", u + 1) != std::string::npos) break; leaf.resize(u); }   // a loaded copy: <map>_<pid>_<n>
 	std::string dir = std::string(TheGlobalData->getPath_UserData().str()) + "Maps\\" + leaf + "\\", stamp;
 	if (!readWhole(dir + "lwcity.stamp", stamp) || stamp.compare(0, 5, "pack ") != 0) return false;   // only city maps (they carry a stamp)
 	std::string city = stamp.substr(5, stamp.find(' ', 5) - 5);

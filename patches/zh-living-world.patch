@@ -399,7 +399,7 @@ diff -ruN a/GameEngine/Include/Common/MapObject.h b/GameEngine/Include/Common/Ma
  #define MAP_HEIGHT_SCALE	(MAP_XY_FACTOR/16.0f)		//divide all map heights by 8.
 diff -ruN a/GameEngine/Include/Common/MessageStream.h b/GameEngine/Include/Common/MessageStream.h
 --- a/GameEngine/Include/Common/MessageStream.h	2026-10-13 16:49:44.961304129 +0100
-+++ b/GameEngine/Include/Common/MessageStream.h	2026-10-15 20:31:18.535945351 +0100
++++ b/GameEngine/Include/Common/MessageStream.h	2026-10-16 19:22:18.425463136 +0100
 @@ -46,8 +46,8 @@
  
  class Drawable;
@@ -411,7 +411,7 @@ diff -ruN a/GameEngine/Include/Common/MessageStream.h b/GameEngine/Include/Commo
  
  union GameMessageArgumentType														///< Union of possible data for given message type
  {
-@@ -592,6 +592,13 @@
+@@ -592,6 +592,14 @@
  		MSG_LOGIC_CRC,															///< CRC from the logic passed around in a network game :)
  		MSG_SET_MINE_CLEARING_DETAIL,								///< CRC from the logic passed around in a network game :)
  		MSG_ENABLE_RETALIATION_MODE,								///< Turn retaliation mode on or off for the specified player.
@@ -422,6 +422,7 @@ diff -ruN a/GameEngine/Include/Common/MessageStream.h b/GameEngine/Include/Commo
 +		MSG_UM_RENT_DAMAGE,													///< Living World: damage everything a slot owns (args: slot, permille of max health).
 +		MSG_UM_IMMUNE,															///< Living World: spawn protection for a slot (args: slot, last protected logic frame; 0 clears). Server-issued only.
 +		MSG_UM_REFILL_SUPPLY,												///< Living World: every supply dock gains this much cash worth of supplies (up to its starting stock). Server-issued only.
++		MSG_UM_ECON_TICK,														///< Living World: economy cycle (10 int args: pools, inflation, depot%, derrick%, other%, seed, join inject, baseline GDP, max multiplier, decay). Server-issued only.
  
  		MSG_BEGIN_DEBUG_NETWORK_MESSAGES = 1900,		///< network messages that exist only in debug/internal builds. all grouped separately.
  
@@ -2491,7 +2492,7 @@ diff -ruN a/GameEngine/Source/Common/INI/INIWater.cpp b/GameEngine/Source/Common
  	} else {
 diff -ruN a/GameEngine/Source/Common/MessageStream.cpp b/GameEngine/Source/Common/MessageStream.cpp
 --- a/GameEngine/Source/Common/MessageStream.cpp	2026-10-13 16:49:45.001304604 +0100
-+++ b/GameEngine/Source/Common/MessageStream.cpp	2026-10-15 20:31:18.535945351 +0100
++++ b/GameEngine/Source/Common/MessageStream.cpp	2026-10-16 19:22:06.311541671 +0100
 @@ -113,7 +113,7 @@
  		return ARGUMENTDATATYPE_UNKNOWN;
  	}
@@ -2501,7 +2502,7 @@ diff -ruN a/GameEngine/Source/Common/MessageStream.cpp b/GameEngine/Source/Commo
  
  	if (a != NULL)
  	{
-@@ -680,6 +680,13 @@
+@@ -680,6 +680,14 @@
  	CHECK_IF(MSG_OBJECT_JOINED_TEAM)
  	CHECK_IF(MSG_SET_MINE_CLEARING_DETAIL)
  	CHECK_IF(MSG_ENABLE_RETALIATION_MODE)
@@ -2511,6 +2512,7 @@ diff -ruN a/GameEngine/Source/Common/MessageStream.cpp b/GameEngine/Source/Commo
 +	CHECK_IF(MSG_UM_CHARGE)
 +	CHECK_IF(MSG_UM_RENT_DAMAGE)
 +	CHECK_IF(MSG_UM_IMMUNE)
++	CHECK_IF(MSG_UM_ECON_TICK)
 +	CHECK_IF(MSG_UM_REFILL_SUPPLY)
  	return commandName;
  }
@@ -3075,7 +3077,7 @@ diff -ruN a/GameEngine/Source/Common/System/Radar.cpp b/GameEngine/Source/Common
  		if( radarColorLookupTable[ i ].event == type )
 diff -ruN a/GameEngine/Source/Common/System/SaveGame/GameState.cpp b/GameEngine/Source/Common/System/SaveGame/GameState.cpp
 --- a/GameEngine/Source/Common/System/SaveGame/GameState.cpp	2026-10-13 16:49:45.009304700 +0100
-+++ b/GameEngine/Source/Common/System/SaveGame/GameState.cpp	2026-10-13 20:25:59.012156359 +0100
++++ b/GameEngine/Source/Common/System/SaveGame/GameState.cpp	2026-10-16 18:43:58.127062958 +0100
 @@ -789,7 +789,7 @@
  // ------------------------------------------------------------------------------------------------
  AsciiString GameState::getMapLeafName(const AsciiString& in) const
@@ -3103,24 +3105,28 @@ diff -ruN a/GameEngine/Source/Common/System/SaveGame/GameState.cpp b/GameEngine/
  
  					//
  					// block was not found, this could have been a block from an older file
-@@ -1468,7 +1468,7 @@
+@@ -1468,7 +1468,10 @@
  				{
  
  					DEBUG_CRASH(( "Error loading block '%s' in file '%s'\n",
 -												blockInfo->blockName.str(), xfer->getIdentifier() ));
 +												blockInfo->blockName.str(), xfer->getIdentifier().str() ));
++#ifdef UM_LW
++					printf("[um] snapshot: error loading block '%s'\n", blockInfo->blockName.str()); fflush(stdout);
++#endif
  					throw;
  
  				}  // end catch
 diff -ruN a/GameEngine/Source/Common/System/SaveGame/GameStateMap.cpp b/GameEngine/Source/Common/System/SaveGame/GameStateMap.cpp
 --- a/GameEngine/Source/Common/System/SaveGame/GameStateMap.cpp	2026-10-13 16:49:45.009304700 +0100
-+++ b/GameEngine/Source/Common/System/SaveGame/GameStateMap.cpp	2026-10-16 02:59:37.664181168 +0100
-@@ -41,6 +41,23 @@
++++ b/GameEngine/Source/Common/System/SaveGame/GameStateMap.cpp	2026-10-16 18:54:16.842705923 +0100
+@@ -41,6 +41,24 @@
  #include "GameClient/MapUtil.h"
  #include "GameLogic/GameLogic.h"
  #include "GameNetwork/GameInfo.h"
 +#ifdef UM_LW
 +#include <string>
++#include <vector>
 +#include <windows.h>
 +// Living World: generated city maps are hundreds of megabytes, far too big to embed in every snapshot. The client program (citymap.cpp) sets these
 +// hooks: a save writes a small reference ("LWMAPREF1", the pack name and the map's CRC) instead of the map, and a load rebuilds the map from the
@@ -3139,7 +3145,7 @@ diff -ruN a/GameEngine/Source/Common/System/SaveGame/GameStateMap.cpp b/GameEngi
  
  // GLOBALS ////////////////////////////////////////////////////////////////////////////////////////
  GameStateMap *TheGameStateMap = NULL;
-@@ -78,6 +95,9 @@
+@@ -78,6 +96,9 @@
  // ------------------------------------------------------------------------------------------------
  static void embedPristineMap( AsciiString map, Xfer *xfer )
  {
@@ -3149,7 +3155,7 @@ diff -ruN a/GameEngine/Source/Common/System/SaveGame/GameStateMap.cpp b/GameEngi
   
  	// open the map file
  	File *file = TheFileSystem->openFile( map.str(), File::READ | File::BINARY );
-@@ -134,6 +154,9 @@
+@@ -134,6 +155,9 @@
  // ------------------------------------------------------------------------------------------------
  static void embedInUseMap( AsciiString map, Xfer *xfer )
  {
@@ -3159,35 +3165,108 @@ diff -ruN a/GameEngine/Source/Common/System/SaveGame/GameStateMap.cpp b/GameEngi
  	FILE *fp = fopen( map.str(), "rb" );
  
  	// sanity
-@@ -216,6 +239,28 @@
+@@ -187,20 +211,33 @@
+ // ------------------------------------------------------------------------------------------------
+ /** Extract the map from the xfer stream and save as a file with filename 'mapToSave' */
+ // ------------------------------------------------------------------------------------------------
+-static void extractAndSaveMap( AsciiString mapToSave, Xfer *xfer )
++#ifdef UM_LW
++// the process id in a Living World map copy's name (<map>_<pid>_<n>.map); 0 for any other file or for this process's own copies
++static unsigned long umScratchOwner( const char *leaf )
++{
++	std::string l(leaf); if (l.size() > 4) l.resize(l.size() - 4);
++	size_t u2 = l.find_last_of('_'); if (u2 == std::string::npos || u2 == 0 || u2 + 1 >= l.size() || l.find_first_not_of("0123456789", u2 + 1) != std::string::npos) return 0;
++	size_t u1 = l.find_last_of('_', u2 - 1); if (u1 == std::string::npos || u1 + 1 >= u2) return 0;
++	std::string pid = l.substr(u1 + 1, u2 - u1 - 1); if (pid.find_first_not_of("0123456789") != std::string::npos) return 0;
++	unsigned long p = strtoul(pid.c_str(), NULL, 10);
++	return p == GetCurrentProcessId() ? 0 : p;
++}
++// a new file name for the map this process extracts on this load: <map>_<pid>_<n>.map; earlier copies of this process are removed
++static std::string umScratchName( const AsciiString &mapToSave )
++{
++	static int s_loadNo = 0; static std::vector<std::string> s_old;
++	std::string base(mapToSave.str()); if (base.size() > 4 && _stricmp(base.c_str() + base.size() - 4, ".map") == 0) base.resize(base.size() - 4);
++	for (int cut = 0; cut < 2; ++cut) { size_t u = base.find_last_of('_'); if (u == std::string::npos || u + 1 >= base.size() || base.find_first_not_of("0123456789", u + 1) != std::string::npos) break; base.resize(u); }   // saved from a copy: drop its _<pid>_<n>
++	char suffix[48]; sprintf(suffix, "_%lu_%d.map", (unsigned long)GetCurrentProcessId(), ++s_loadNo);
++	for (size_t k = 0; k < s_old.size(); ) { if (DeleteFileA(s_old[k].c_str()) || GetLastError() == ERROR_FILE_NOT_FOUND) s_old.erase(s_old.begin() + k); else ++k; }   // once nothing holds them
++	std::string mine = base + suffix; s_old.push_back(mine);
++	return mine;
++}
++#endif
++static void extractAndSaveMap( AsciiString &mapToSave, Xfer *xfer )
+ {
+ 	UnsignedInt dataSize;
+ 
+-	// open handle to output file
+-	FILE *fp = fopen( mapToSave.str(), "w+b" );
+-	if( fp == NULL )
+-	{
+-
+-		DEBUG_CRASH(( "extractAndSaveMap - Unable to open file '%s'\n", mapToSave.str() ));
+-		throw SC_INVALID_DATA;
+-
+-	}  // en
+-
+ 	// read data size from file
+ 	dataSize = xfer->beginBlock();
+ 
+@@ -216,6 +253,43 @@
  
  	// read map file
  	xfer->xferUser( buffer, dataSize );
 +#ifdef UM_LW
 +	if (dataSize > sizeof UM_MAPREF_TAG && memcmp(buffer, UM_MAPREF_TAG, sizeof UM_MAPREF_TAG) == 0)
 +	{
-+		fclose(fp);
++		// Living World: a reference to a city map; the map built here is copied to this process's file for this load (see umScratchName)
 +		std::string ref(buffer + sizeof UM_MAPREF_TAG, dataSize - sizeof UM_MAPREF_TAG), local;
 +		delete [] buffer;
-+		bool ok = UmMapRefResolve && UmMapRefResolve(ref, &local);
-+		if (ok && !CopyFileA(local.c_str(), mapToSave.str(), FALSE))
-+		{	// the copy from the previous load may still be open: it is the same map if it has the same size (the source's CRC was checked above)
-+			WIN32_FILE_ATTRIBUTE_DATA a, b;
-+			ok = GetFileAttributesExA(local.c_str(), GetFileExInfoStandard, &a) && GetFileAttributesExA(mapToSave.str(), GetFileExInfoStandard, &b) && a.nFileSizeLow == b.nFileSizeLow && a.nFileSizeHigh == b.nFileSizeHigh;
-+			if (!ok) printf("[um] snapshot: cannot copy %s to %s (error %lu)\n", local.c_str(), mapToSave.str(), (unsigned long)GetLastError());
-+		}
-+		if (!ok)
++		if (!UmMapRefResolve || !UmMapRefResolve(ref, &local))
 +		{
 +			printf("[um] snapshot: the world's map ('%s') could not be made here\n", ref.c_str());
 +			throw SC_INVALID_DATA;
 +		}
++		std::string mine = umScratchName(mapToSave);
++		if (!CopyFileA(local.c_str(), mine.c_str(), FALSE))
++		{
++			printf("[um] snapshot: cannot copy %s to %s (error %lu)\n", local.c_str(), mine.c_str(), (unsigned long)GetLastError());
++			throw SC_INVALID_DATA;
++		}
++		mapToSave = AsciiString(mine.c_str());
++		TheWritableGlobalData->m_mapName = mapToSave;
 +		xfer->endBlock();
 +		return;
 +	}
++	{	// an embedded map: also into a file of this process (the shared one can be in use by the server or a client on the same PC)
++		mapToSave = AsciiString(umScratchName(mapToSave).c_str());
++		TheWritableGlobalData->m_mapName = mapToSave;
++	}
 +#endif
++
++	// open handle to output file
++	FILE *fp = fopen( mapToSave.str(), "w+b" );
++	if( fp == NULL )
++	{
++
++		DEBUG_CRASH(( "extractAndSaveMap - Unable to open file '%s'\n", mapToSave.str() ));
++		throw SC_INVALID_DATA;
++
++	}  // en
  
  	// write contents of buffer to new file
  	if( fwrite( buffer, 1, dataSize, fp ) != dataSize )
+@@ -501,6 +575,12 @@
+ 			Char *c = strrchr( item.cFileName, '.' );
+ 			if( c && stricmp( c, ".map" ) == 0 )
+ 				fileToDelete.set( item.cFileName );  // we want to delete this one
++#ifdef UM_LW
++			// Living World: the server and a client on the same PC share this folder; a map copy of another process (<map>_<pid>_<n>.map) is in use
++			// by it, and deleting it between the engine's opens of the file broke that process's load. Each process removes its own copies.
++			if( !fileToDelete.isEmpty() && umScratchOwner( item.cFileName ) != 0 )
++				fileToDelete.clear();
++#endif
+ 
+ 		}  // end if
+ 
 diff -ruN a/GameEngine/Source/Common/System/StackDump.cpp b/GameEngine/Source/Common/System/StackDump.cpp
 --- a/GameEngine/Source/Common/System/StackDump.cpp	2026-10-13 16:49:45.009304700 +0100
 +++ b/GameEngine/Source/Common/System/StackDump.cpp	2026-10-13 19:43:52.164398391 +0100
@@ -3362,8 +3441,21 @@ diff -ruN a/GameEngine/Source/Common/Thing/ThingFactory.cpp b/GameEngine/Source/
  
 diff -ruN a/GameEngine/Source/Common/Thing/ThingTemplate.cpp b/GameEngine/Source/Common/Thing/ThingTemplate.cpp
 --- a/GameEngine/Source/Common/Thing/ThingTemplate.cpp	2026-10-13 16:49:45.009304700 +0100
-+++ b/GameEngine/Source/Common/Thing/ThingTemplate.cpp	2026-10-13 19:28:28.797703516 +0100
-@@ -1322,7 +1322,7 @@
++++ b/GameEngine/Source/Common/Thing/ThingTemplate.cpp	2026-10-16 19:23:38.947447205 +0100
+@@ -28,7 +28,11 @@
+ ///////////////////////////////////////////////////////////////////////////////////////////////////
+ 
+ // INCLUDES ///////////////////////////////////////////////////////////////////////////////////////
+-#include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
++#include "PreRTS.h"
++#ifdef UM_LW
++#include "net/um_economy.h"
++#endif
++// This must go first in EVERY cpp file int the GameEngine
+ 
+ #define DEFINE_POWER_NAMES								// for PowerNames[]
+ #define DEFINE_SHADOW_NAMES								// for TheShadowNames[]
+@@ -1322,7 +1326,7 @@
  
  	char buffer[1024];
  	strncpy(buffer, name.str(), sizeof(buffer));
@@ -3372,6 +3464,16 @@ diff -ruN a/GameEngine/Source/Common/Thing/ThingTemplate.cpp b/GameEngine/Source
  		if (buffer[i] == '/') {
  			i++;
  			break;
+@@ -1537,6 +1541,9 @@
+ 	// changePercent format is "-.2 equals 20% cheaper"
+ 	Real factionModifier = 1 + player->getProductionCostChangePercent( getName() );
+ 	factionModifier *= player->getProductionCostChangeBasedOnKindOf( m_kindof );
++#ifdef UM_LW
++	factionModifier *= UmEconCostMult( player );   // inflation: prices follow the faction group's GDP (1.0 when off)
++#endif
+ 	return getBuildCost() * factionModifier * player->getHandicap()->getHandicap(Handicap::BUILDCOST, this);
+ }
+ 
 diff -ruN a/GameEngine/Source/Common/UserPreferences.cpp b/GameEngine/Source/Common/UserPreferences.cpp
 --- a/GameEngine/Source/Common/UserPreferences.cpp	2026-10-13 16:49:45.009304700 +0100
 +++ b/GameEngine/Source/Common/UserPreferences.cpp	2026-10-13 19:43:27.251589102 +0100
@@ -3564,6 +3666,63 @@ diff -ruN a/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/PopupLadderSelec
  	{
  		AsciiString marker;
  		marker.format("INI:Faction%s", it->str());
+diff -ruN a/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/QuitMenu.cpp b/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/QuitMenu.cpp
+--- a/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/QuitMenu.cpp	2026-10-13 16:49:45.021304839 +0100
++++ b/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/QuitMenu.cpp	2026-10-16 18:55:56.519314581 +0100
+@@ -112,6 +112,29 @@
+ 
+ }
+ 
++#ifdef UM_LW
++// Living World: the game menu of a client of the persistent world reads Continue / Join Queue (X) / Exit.
++// The retail layout is fixed in the .big files, so the existing buttons are relabelled here: "Return" is Continue, "Restart" is Join Queue (a spectator's way to a seat) and is hidden for seat holders.
++extern int UmNetMySlot( void );
++extern void UmNetQueueInfo( int *pos, int *total );
++extern void UmNetRequestJoin( void );
++static Bool umIsClient( void ) { return getenv( "UM_CLIENT" ) != NULL; }
++void UmQuitMenuRefresh( void )
++{
++	if( !isVisible || !umIsClient() ) return;
++	GameWindow *ret = TheWindowManager->winGetWindowFromId( NULL, buttonReturn );
++	if( ret ) GadgetButtonSetText( ret, UnicodeString( L"Continue" ) );
++	if( buttonExitWin ) GadgetButtonSetText( buttonExitWin, UnicodeString( L"Exit" ) );
++	if( !buttonRestartWin ) return;
++	if( UmNetMySlot() >= 0 ) { buttonRestartWin->winHide( TRUE ); return; }
++	int pos = 0, total = 0; UmNetQueueInfo( &pos, &total );
++	UnicodeString label; if( pos > 0 ) label.format( L"Join Queue (%d)", pos ); else label = UnicodeString( L"Join Queue" );
++	buttonRestartWin->winHide( FALSE );
++	GadgetButtonSetText( buttonRestartWin, label );
++	buttonRestartWin->winEnable( pos == 0 );   // asked or queued: greyed out, the number is the place in line
++}
++#endif
++
+ // PUBLIC FUNCTIONS ///////////////////////////////////////////////////////////////////////////////
+ 
+ void destroyQuitMenu()
+@@ -446,6 +469,9 @@
+ 		HideInGameChat();
+ 		TheControlBar->hidePurchaseScience();
+ 		isVisible = TRUE;
++#ifdef UM_LW
++		UmQuitMenuRefresh();
++#endif
+ 	}
+ 		
+ 	TheInGameUI->setQuitMenuVisible(isVisible);
+@@ -537,6 +563,13 @@
+ //			}  // end else if
+ 			else if( controlID == buttonRestart )
+ 			{
++#ifdef UM_LW
++				if( umIsClient() )
++				{
++					if( UmNetMySlot() < 0 ) { UmNetRequestJoin(); UmQuitMenuRefresh(); }
++					break;
++				}
++#endif
+ 				if ( TheGameLogic->isInMultiplayerGame() )
+ 				{
+ 					// we really want to surrender
 diff -ruN a/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/ScoreScreen.cpp b/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/ScoreScreen.cpp
 --- a/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/ScoreScreen.cpp	2026-10-13 16:49:45.021304839 +0100
 +++ b/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/ScoreScreen.cpp	2026-10-13 19:45:08.650464686 +0100
@@ -3827,10 +3986,50 @@ diff -ruN a/GameEngine/Source/GameClient/GameClient.cpp b/GameEngine/Source/Game
  	{
  		TheDisplay->preloadModelAssets(debrisModelNamesGlobalHack[i]);
  	}
+diff -ruN a/GameEngine/Source/GameClient/GameText.cpp b/GameEngine/Source/GameClient/GameText.cpp
+--- a/GameEngine/Source/GameClient/GameText.cpp	2026-10-13 16:49:45.025304890 +0100
++++ b/GameEngine/Source/GameClient/GameText.cpp	2026-10-16 20:42:17.346789320 +0100
+@@ -1320,6 +1320,13 @@
+ 	}
+ 	if( exists )	
+ 		*exists = TRUE;
++#ifdef UM_LW
++	if( label && label[0] == 'G' && ( !strcmp( label, "GUI:AddCash" ) || !strcmp( label, "GUI:LoseCash" ) ) )
++	{	// Living World: the floating cash text shows the local player's faction currency
++		extern void UmEconLocalizeCash( UnicodeString *fmt );
++		UnicodeString t = lookUp->info->text; UmEconLocalizeCash( &t ); return t;
++	}
++#endif
+ 	return lookUp->info->text;
+ }
+ 
 diff -ruN a/GameEngine/Source/GameClient/InGameUI.cpp b/GameEngine/Source/GameClient/InGameUI.cpp
 --- a/GameEngine/Source/GameClient/InGameUI.cpp	2026-10-13 16:49:45.029304937 +0100
-+++ b/GameEngine/Source/GameClient/InGameUI.cpp	2026-10-15 20:33:03.767082293 +0100
-@@ -3449,6 +3449,7 @@
++++ b/GameEngine/Source/GameClient/InGameUI.cpp	2026-10-16 20:42:17.346789320 +0100
+@@ -1820,11 +1820,22 @@
+ 	if( moneyPlayer)
+ 	{
+ 		Int currentMoney = moneyPlayer->getMoney()->countMoney();
++#ifdef UM_LW
++		static Int lastCurrency = -2; extern Int UmEconCurrency( const Player *p ); const Int currency = UmEconCurrency( moneyPlayer );   // Living World: $ / yen / shekel by faction group
++		if( lastMoney != currentMoney || lastCurrency != currency )
++#else
+ 		if( lastMoney != currentMoney )
++#endif
+ 		{
+ 			UnicodeString buffer;
+ 
++#ifdef UM_LW
++			UnicodeString moneyFmt = TheGameText->fetch( "GUI:ControlBarMoneyDisplay" );
++			{ extern void UmEconSwapSymbol( const Player *p, UnicodeString *fmt ); UmEconSwapSymbol( moneyPlayer, &moneyFmt ); }
++			buffer.format( moneyFmt, currentMoney ); lastCurrency = currency;
++#else
+ 			buffer.format( TheGameText->fetch( "GUI:ControlBarMoneyDisplay" ), currentMoney );
++#endif
+ 			GadgetStaticTextSetText( moneyWin, buffer );
+ 			lastMoney = currentMoney;
+ 			
+@@ -3449,6 +3460,7 @@
  //-------------------------------------------------------------------------------------------------
  void InGameUI::postDraw( void )
  {
@@ -3838,6 +4037,17 @@ diff -ruN a/GameEngine/Source/GameClient/InGameUI.cpp b/GameEngine/Source/GameCl
  
  	// render our display strings for the messages if on
  	if( m_messagesOn )
+@@ -3457,8 +3469,9 @@
+ 		Color dropColor;
+ 		UnsignedByte r, g, b, a;
+ 
++		extern int gUmTopReserve;   // Living World: the spectator note sits at the top left
+ 		x = m_messagePosition.x;
+-		y = m_messagePosition.y;
++		y = m_messagePosition.y + gUmTopReserve;
+ 		for( i = MAX_UI_MESSAGES - 1; i >= 0; i-- )
+ 		{
+ 
 diff -ruN a/GameEngine/Source/GameClient/Input/Keyboard.cpp b/GameEngine/Source/GameClient/Input/Keyboard.cpp
 --- a/GameEngine/Source/GameClient/Input/Keyboard.cpp	2026-10-13 16:49:45.029304937 +0100
 +++ b/GameEngine/Source/GameClient/Input/Keyboard.cpp	2026-10-13 19:48:07.950133997 +0100
@@ -4899,6 +5109,32 @@ diff -ruN a/GameEngine/Source/GameLogic/Object/Body/UndeadBody.cpp b/GameEngine/
  	{
  		SlowDeathBehaviorInterface* sdu = (*update)->getSlowDeathBehaviorInterface();
  		if (sdu != NULL  && sdu->isDieApplicable(damageInfo) )
+diff -ruN a/GameEngine/Source/GameLogic/Object/Collide/CrateCollide/MoneyCrateCollide.cpp b/GameEngine/Source/GameLogic/Object/Collide/CrateCollide/MoneyCrateCollide.cpp
+--- a/GameEngine/Source/GameLogic/Object/Collide/CrateCollide/MoneyCrateCollide.cpp	2026-10-13 16:49:45.045305128 +0100
++++ b/GameEngine/Source/GameLogic/Object/Collide/CrateCollide/MoneyCrateCollide.cpp	2026-10-16 19:23:39.043788533 +0100
+@@ -28,7 +28,11 @@
+ ///////////////////////////////////////////////////////////////////////////////////////////////////
+ 
+ // INCLUDES ///////////////////////////////////////////////////////////////////////////////////////
+-#include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
++#include "PreRTS.h"
++#ifdef UM_LW
++#include "net/um_economy.h"
++#endif
++// This must go first in EVERY cpp file int the GameEngine
+ #include "Common/AudioEventRTS.h"
+ #include "Common/MiscAudio.h"
+ #include "Common/Player.h"
+@@ -57,6 +61,9 @@
+ 	
+ 	money += getUpgradedSupplyBoost(other);
+ 
++#ifdef UM_LW
++	money = (UnsignedInt)UmEconDraw( other->getControllingPlayer(), UM_CAT_OTHER, (Int)money, (Int)other->getID() );
++#endif
+ 	other->getControllingPlayer()->getMoney()->deposit( money );
+ 	other->getControllingPlayer()->getScoreKeeper()->addMoneyEarned( money );
+ 
 diff -ruN a/GameEngine/Source/GameLogic/Object/Contain/GarrisonContain.cpp b/GameEngine/Source/GameLogic/Object/Contain/GarrisonContain.cpp
 --- a/GameEngine/Source/GameLogic/Object/Contain/GarrisonContain.cpp	2026-10-13 16:49:45.045305128 +0100
 +++ b/GameEngine/Source/GameLogic/Object/Contain/GarrisonContain.cpp	2026-10-13 19:15:08.196881810 +0100
@@ -5053,6 +5289,73 @@ diff -ruN a/GameEngine/Source/GameLogic/Object/PartitionManager.cpp b/GameEngine
  
  }  // end crc
  
+diff -ruN a/GameEngine/Source/GameLogic/Object/Update/AIUpdate/DeliverPayloadAIUpdate.cpp b/GameEngine/Source/GameLogic/Object/Update/AIUpdate/DeliverPayloadAIUpdate.cpp
+--- a/GameEngine/Source/GameLogic/Object/Update/AIUpdate/DeliverPayloadAIUpdate.cpp	2026-10-13 16:49:45.057305269 +0100
++++ b/GameEngine/Source/GameLogic/Object/Update/AIUpdate/DeliverPayloadAIUpdate.cpp	2026-10-16 19:23:39.063056798 +0100
+@@ -25,7 +25,11 @@
+ // DeliverPayloadAIUpdate.cpp ////////////
+ // Author: Graham Smallwood, March 2002
+ // Desc:   State machine that controls the approach and deployment of airborne cargo
+-#include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
++#include "PreRTS.h"
++#ifdef UM_LW
++#include "net/um_economy.h"
++#endif
++// This must go first in EVERY cpp file int the GameEngine
+ 
+ #define DEFINE_WEAPONSLOTTYPE_NAMES
+ 
+@@ -724,6 +728,24 @@
+ 	{
+ 		Object* item = items->front();
+ 
++#ifdef UM_LW
++		// an empty 'other generators' budget: a supply drop plane has no crates to drop (the crate, or the parachute carrying it, is thrown away)
++		Bool umNoCrates = FALSE;
++		if( UmEconEnabled() && UmEconBudgetEmpty( owner->getControllingPlayer(), UM_CAT_OTHER ) )
++		{
++			if( item->isKindOf( KINDOF_CRATE ) ) umNoCrates = TRUE;
++			else if( item->getContain() && item->getContain()->getContainedItemsList() )
++			{
++				const ContainedItemsList *inner = item->getContain()->getContainedItemsList();
++				for( ContainedItemsList::const_iterator ci = inner->begin(); ci != inner->end(); ++ci ) if( (*ci)->isKindOf( KINDOF_CRATE ) ) umNoCrates = TRUE;
++			}
++		}
++		if( umNoCrates )
++		{
++			TheGameLogic->destroyObject( item );
++		}
++		else
++#endif
+ 		if( ai->isFireWeapon() )
+ 		{
+ 			Coord3D pos = *ai->getTargetPos();
+diff -ruN a/GameEngine/Source/GameLogic/Object/Update/AIUpdate/HackInternetAIUpdate.cpp b/GameEngine/Source/GameLogic/Object/Update/AIUpdate/HackInternetAIUpdate.cpp
+--- a/GameEngine/Source/GameLogic/Object/Update/AIUpdate/HackInternetAIUpdate.cpp	2026-10-13 16:49:45.057305269 +0100
++++ b/GameEngine/Source/GameLogic/Object/Update/AIUpdate/HackInternetAIUpdate.cpp	2026-10-16 19:23:39.016812959 +0100
+@@ -26,7 +26,11 @@
+ // Author: Kris Morness, June 2002
+ // Desc:   State machine that handles internet hacking (free cash)
+ 
+-#include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
++#include "PreRTS.h"
++#ifdef UM_LW
++#include "net/um_economy.h"
++#endif
++// This must go first in EVERY cpp file int the GameEngine
+ 
+ #include "Common/Player.h"
+ #include "Common/ThingFactory.h"
+@@ -532,6 +536,9 @@
+ 						amount = 1;
+ 						break;
+ 				}
++#ifdef UM_LW
++				amount = UmEconDraw( owner->getControllingPlayer(), UM_CAT_OTHER, amount, (Int)owner->getID() );   // hackers draw from the 'other generators' budget; $0 once it is empty
++#endif
+ 				money->deposit( amount );
+ 				owner->getControllingPlayer()->getScoreKeeper()->addMoneyEarned( amount );
+ 
 diff -ruN a/GameEngine/Source/GameLogic/Object/Update/AIUpdate/JetAIUpdate.cpp b/GameEngine/Source/GameLogic/Object/Update/AIUpdate/JetAIUpdate.cpp
 --- a/GameEngine/Source/GameLogic/Object/Update/AIUpdate/JetAIUpdate.cpp	2026-10-13 16:49:45.057305269 +0100
 +++ b/GameEngine/Source/GameLogic/Object/Update/AIUpdate/JetAIUpdate.cpp	2026-10-13 19:15:21.886710783 +0100
@@ -5098,6 +5401,42 @@ diff -ruN a/GameEngine/Source/GameLogic/Object/Update/AIUpdate/RailroadGuideAIUp
  
  	m_nextStationTask = DO_NOTHING;
  	m_trailerID = INVALID_ID;
+diff -ruN a/GameEngine/Source/GameLogic/Object/Update/AutoDepositUpdate.cpp b/GameEngine/Source/GameLogic/Object/Update/AutoDepositUpdate.cpp
+--- a/GameEngine/Source/GameLogic/Object/Update/AutoDepositUpdate.cpp	2026-10-13 16:49:45.057305269 +0100
++++ b/GameEngine/Source/GameLogic/Object/Update/AutoDepositUpdate.cpp	2026-10-16 19:23:38.993691043 +0100
+@@ -50,7 +50,11 @@
+ //-----------------------------------------------------------------------------
+ // USER INCLUDES //////////////////////////////////////////////////////////////
+ //-----------------------------------------------------------------------------
+-#include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
++#include "PreRTS.h"
++#ifdef UM_LW
++#include "net/um_economy.h"
++#endif
++// This must go first in EVERY cpp file int the GameEngine
+ 
+ #include "Common/BuildAssistant.h"
+ #include "Common/Thing.h"
+@@ -165,11 +169,18 @@
+ 			return UPDATE_SLEEP_NONE;
+ 		
+ 		int moneyAmount = modData->m_depositAmount + getUpgradedSupplyBoost();
++#ifdef UM_LW
++		if( modData->m_isActualMoney )
++		{	// oil derricks draw from the derrick budget; Black Markets and supply drop zones from the 'other generators' budget
++			const Bool other = getObject()->isKindOf( KINDOF_FS_BLACK_MARKET ) || getObject()->isKindOf( KINDOF_FS_SUPPLY_DROPZONE );
++			moneyAmount = UmEconDraw( getObject()->getControllingPlayer(), other ? UM_CAT_OTHER : UM_CAT_DERRICK, moneyAmount, (Int)getObject()->getID() );
++		}
++#endif
+ 
+ 		if( modData->m_isActualMoney )
+ 		{
+ 			getObject()->getControllingPlayer()->getMoney()->deposit( moneyAmount );
+-			getObject()->getControllingPlayer()->getScoreKeeper()->addMoneyEarned( modData->m_depositAmount);
++			getObject()->getControllingPlayer()->getScoreKeeper()->addMoneyEarned( moneyAmount < modData->m_depositAmount ? moneyAmount : modData->m_depositAmount );
+ 		}
+ 		
+ 		Bool displayMoney = moneyAmount > 0 ? TRUE : FALSE;
 diff -ruN a/GameEngine/Source/GameLogic/Object/Update/AutoFindHealingUpdate.cpp b/GameEngine/Source/GameLogic/Object/Update/AutoFindHealingUpdate.cpp
 --- a/GameEngine/Source/GameLogic/Object/Update/AutoFindHealingUpdate.cpp	2026-10-13 16:49:45.057305269 +0100
 +++ b/GameEngine/Source/GameLogic/Object/Update/AutoFindHealingUpdate.cpp	2026-10-13 19:14:04.402156907 +0100
@@ -5251,6 +5590,32 @@ diff -ruN a/GameEngine/Source/GameLogic/Object/Update/DockUpdate/DockUpdate.cpp 
  	{
  		// Okay, this is cool.  On save, the size and a bunch of coords will be written.
  		// on load, vectorSize will be at 0 from the .size, but will then get set
+diff -ruN a/GameEngine/Source/GameLogic/Object/Update/DockUpdate/SupplyCenterDockUpdate.cpp b/GameEngine/Source/GameLogic/Object/Update/DockUpdate/SupplyCenterDockUpdate.cpp
+--- a/GameEngine/Source/GameLogic/Object/Update/DockUpdate/SupplyCenterDockUpdate.cpp	2026-10-13 16:49:45.057305269 +0100
++++ b/GameEngine/Source/GameLogic/Object/Update/DockUpdate/SupplyCenterDockUpdate.cpp	2026-10-16 19:23:38.970569122 +0100
+@@ -27,7 +27,11 @@
+ // Desc:   The action of this dock update is taking boxes and turning them into money for my ownerplayer
+ ///////////////////////////////////////////////////////////////////////////////////////////////////
+ 
+-#include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
++#include "PreRTS.h"
++#ifdef UM_LW
++#include "net/um_economy.h"
++#endif
++// This must go first in EVERY cpp file int the GameEngine
+ 
+ #include "Common/Player.h"
+ #include "Common/Xfer.h"
+@@ -109,6 +113,9 @@
+ 	if( value > 0)
+ 	{
+ 		Money *ownerPlayerMoney = ownerPlayer->getMoney();
++#ifdef UM_LW
++		value = (UnsignedInt)UmEconDraw( ownerPlayer, UM_CAT_DEPOT, (Int)value, (Int)getObject()->getID() );   // the depot pays only from its share of the pool
++#endif
+ 		ownerPlayerMoney->deposit(value);
+ 		ownerPlayer->getScoreKeeper()->addMoneyEarned(value);
+ 
 diff -ruN a/GameEngine/Source/GameLogic/Object/Update/DockUpdate/SupplyWarehouseDockUpdate.cpp b/GameEngine/Source/GameLogic/Object/Update/DockUpdate/SupplyWarehouseDockUpdate.cpp
 --- a/GameEngine/Source/GameLogic/Object/Update/DockUpdate/SupplyWarehouseDockUpdate.cpp	2026-10-13 16:49:45.057305269 +0100
 +++ b/GameEngine/Source/GameLogic/Object/Update/DockUpdate/SupplyWarehouseDockUpdate.cpp	2026-10-14 20:34:22.044464822 +0100
@@ -5766,7 +6131,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/Damage.cpp b/GameEngine/Source/Ga
  	"CRUSH",					
 diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source/GameLogic/System/GameLogic.cpp
 --- a/GameEngine/Source/GameLogic/System/GameLogic.cpp	2026-10-13 16:49:45.069305412 +0100
-+++ b/GameEngine/Source/GameLogic/System/GameLogic.cpp	2026-10-16 16:36:59.777931087 +0100
++++ b/GameEngine/Source/GameLogic/System/GameLogic.cpp	2026-10-16 20:42:17.342941658 +0100
 @@ -83,6 +83,7 @@
  #include "GameLogic/CrateSystem.h"
  #include "GameLogic/FPUControl.h"
@@ -5775,7 +6140,18 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  #include "GameLogic/Locomotor.h"
  #include "GameLogic/Object.h"
  #include "GameLogic/Module/AIUpdate.h"
-@@ -620,6 +621,9 @@
+@@ -108,6 +109,10 @@
+ #include "GameNetwork/GameSpy/ThreadUtils.h"
+ #include "GameNetwork/LANAPICallbacks.h"
+ #include "GameNetwork/NetworkInterface.h"
++#ifdef UM_LW
++#include "net/um_economy.h"
++#include <map>
++#endif
+ #include "GameNetwork/GameSpy/PersistentStorageThread.h"
+ 
+ #include <rts/profile.h>
+@@ -620,6 +625,9 @@
  // ------------------------------------------------------------------------------------------------
  LoadScreen *GameLogic::getLoadScreen( Bool loadingSaveGame )
  {
@@ -5785,7 +6161,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  	switch (m_gameMode) 
  	{
  	case GAME_SHELL:
-@@ -677,6 +681,129 @@
+@@ -677,6 +685,285 @@
  	}
  }
  
@@ -5837,12 +6213,14 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
 +	player->newMap();   // an AI player analyses its base and build list when its map starts; a late joiner starts its 'map' now
 +	if (getenv("UM_TRACE_BIND")) { printf("[um] bind slot %d after newMap:", slotNum); for (Object *o = TheGameLogic->getFirstObject(); o; o = o->getNextObject()) if (o->getControllingPlayer() == player) printf(" %s", o->getTemplate()->getName().str()); printf("\n"); }
 +	if (getenv("UM_TRACE_BIND")) printf("[um] bind slot %d: type %s skirmishAI %d scripts %p\n", (int)slotNum, player->getPlayerType() == PLAYER_COMPUTER ? "cpu" : "human", (int)player->isSkirmishAIPlayer(), (void *)TheSidesList->getSideInfo(player->getPlayerIndex())->getScriptList());
++	{ extern void UmEconJoin(const Player *p, Int cash); UmEconJoin(player, cash); }
 +	if (cash > 0) player->getMoney()->deposit((UnsignedInt)cash, FALSE);
 +	DEBUG_LOG(("UmBindPlayer: slot %d bound at frame %u\n", slotNum, TheGameLogic->getFrame()));
 +}
 +void UmUnbindPlayer(Int slotNum)
 +{
 +	Player *player = umPlayerForSlot(slotNum); if (!player) return;
++	{ extern void UmEconDestroyed(const Player *p, Int amount); UmEconDestroyed(player, (Int)player->getMoney()->countMoney()); }   // cash of a player who leaves the world is gone: deflation
 +	player->umSetPending(TRUE);
 +	player->umSetImmuneUntil(0);
 +	DEBUG_LOG(("UmUnbindPlayer: slot %d freed at frame %u\n", slotNum, TheGameLogic->getFrame()));
@@ -5861,6 +6239,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
 +		extern bool UmNetCatchUp(unsigned *frame, unsigned *live);
 +		unsigned cf = 0, cl = 0;
 +		player->getMoney()->withdraw((UnsignedInt)amount, UmNetCatchUp(&cf, &cl) ? FALSE : TRUE);
++		extern void UmEconRent(const Player *p, Int amount); UmEconRent(player, amount);   // rent feeds the faction currency's pool
 +	}
 +}
 +// Unpaid rent hurts in order: first every attack-capable unit the player has; once none is left, the buildings (except command centers);
@@ -5908,14 +6287,167 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
 +void UmGrantCash(Int slotNum, Int amount)
 +{
 +	Player *player = umPlayerForSlot(slotNum); if (!player || amount <= 0) return;
++	extern void UmEconMinted(const Player *p, Int amount);
++	UmEconMinted(player, amount);   // a bonus is new money: it counts towards the faction group's GDP
 +	player->getMoney()->deposit((UnsignedInt)amount, FALSE);
 +}
++
++// ---- Living World economy (see UmEconomy.h). Rent flows into a pool per faction currency; each rent cycle the pool is split 60/10/30 into budgets
++// that supply depots, oil derricks and the other generators draw their income from. An empty budget means $0 until the next cycle.
++struct UmEconState
++{
++	Bool configured, pools, inflation, seeded;
++	Int split[UM_CAT_COUNT];
++	Int pool[UM_CUR_COUNT], budget[UM_CUR_COUNT][UM_CAT_COUNT], depotCap[UM_CUR_COUNT], minted[UM_CUR_COUNT], multPermille[UM_CUR_COUNT];
++	Int joinInject, baseline, maxMult, decayPermille;
++	std::map<Int, Int> depotSpent;   // supply depot object id -> paid out this cycle (each depot gets an equal share of the depot budget)
++	UmEconState() : configured(FALSE), pools(FALSE), inflation(FALSE), seeded(FALSE), joinInject(0), baseline(200000), maxMult(3000), decayPermille(0)
++	{ split[0] = 60; split[1] = 10; split[2] = 30; for (Int c = 0; c < UM_CUR_COUNT; ++c) { pool[c] = depotCap[c] = minted[c] = 0; multPermille[c] = 1000; for (Int k = 0; k < UM_CAT_COUNT; ++k) budget[c][k] = 0; } }
++};
++static UmEconState gEcon;
++Bool UmEconEnabled( void ) { return gEcon.configured && gEcon.pools; }
++Int UmEconCurrency( const Player *p )
++{
++	if (!p) return -1;
++	for (Int pass = 0; pass < 2; ++pass)   // the side name ("AmericaAirForceGeneral", "ChinaTankGeneral") and the base side ("USA", "China", "GLA")
++	{
++		AsciiString side = pass == 0 ? p->getSide() : p->getBaseSide();
++		if (side.startsWith("America") || side.startsWith("USA")) return UM_CUR_USD;
++		if (side.startsWith("China")) return UM_CUR_CNY;
++		if (side.startsWith("GLA")) return UM_CUR_ILS;
++	}
++	return -1;
++}
++Int UmEconDraw( const Player *p, Int category, Int amount, Int sourceId )
++{
++	if (amount <= 0 || !UmEconEnabled()) return amount;
++	Int c = UmEconCurrency(p); if (c < 0 || category < 0 || category >= UM_CAT_COUNT) return amount;
++	Int take = amount < gEcon.budget[c][category] ? amount : gEcon.budget[c][category];
++	if (category == UM_CAT_DEPOT)
++	{
++		Int &spent = gEcon.depotSpent[sourceId]; Int room = gEcon.depotCap[c] - spent; if (room < 0) room = 0;
++		if (take > room) take = room;
++		spent += take;
++	}
++	gEcon.budget[c][category] -= take;
++	{ static const Bool trace = getenv("UM_TRACE_ECON") != NULL; if (trace) printf("[um] econ draw f%u cur%d cat%d src%d want %d took %d left %d\n", (unsigned)TheGameLogic->getFrame(), (int)c, (int)category, (int)sourceId, (int)amount, (int)take, (int)gEcon.budget[c][category]); }
++	return take;
++}
++Bool UmEconBudgetEmpty( const Player *p, Int category )
++{
++	if (!UmEconEnabled()) return FALSE;
++	Int c = UmEconCurrency(p); if (c < 0 || category < 0 || category >= UM_CAT_COUNT) return FALSE;
++	return gEcon.budget[c][category] <= 0;
++}
++Real UmEconCostMult( const Player *p )
++{
++	if (!gEcon.configured || !gEcon.inflation) return 1.0f;
++	Int c = UmEconCurrency(p); if (c < 0) return 1.0f;
++	return (Real)gEcon.multPermille[c] / 1000.0f;
++}
++void UmEconSymbol( const Player *p, UnicodeString *out )
++{
++	Int c = UmEconCurrency(p); WideChar w = (WideChar)'$'; if (c == UM_CUR_CNY) w = (WideChar)0x00A5; else if (c == UM_CUR_ILS) w = (WideChar)0x20AA;
++	out->clear(); out->concat(w);
++}
++// a money format string ("$%d", "+$%d") with the dollar sign swapped for the player's currency symbol
++void UmEconSwapSymbol( const Player *p, UnicodeString *fmt )
++{
++	if (UmEconCurrency(p) <= UM_CUR_USD) return;   // dollars (or no currency): nothing to change
++	UnicodeString sym; UmEconSymbol(p, &sym); UnicodeString out; Bool done = FALSE;
++	for (const WideChar *c = fmt->str(); *c; ++c) { if (!done && *c == (WideChar)'$') { out.concat(sym.str()); done = TRUE; } else out.concat(*c); }
++	*fmt = out;
++}
++void UmEconLocalizeCash( UnicodeString *fmt ) { UmEconSwapSymbol(ThePlayerList ? ThePlayerList->getLocalPlayer() : NULL, fmt); }
++void UmEconMinted( const Player *p, Int amount )
++{
++	Int c = UmEconCurrency(p); if (c >= 0 && amount > 0) gEcon.minted[c] += amount;
++}
++Bool UmEconGetInfo( Int c, UmEconInfo *out )
++{
++	if (!gEcon.configured || c < 0 || c >= UM_CUR_COUNT) return FALSE;
++	out->pool = gEcon.pool[c]; for (Int k = 0; k < UM_CAT_COUNT; ++k) out->budget[k] = gEcon.budget[c][k];
++	out->depotCap = gEcon.depotCap[c]; out->minted = gEcon.minted[c]; out->multPermille = gEcon.multPermille[c];
++	return TRUE;
++}
++// a player takes a seat: the world gains the starting cash (GDP) and, if the server says so, a share for the pool
++void UmEconJoin( const Player *p, Int cash )
++{
++	Int c = UmEconCurrency(p);
++	if (getenv("UM_TRACE_ECON")) printf("[um] econ join f%u side '%s' base '%s' currency %d cash %d configured %d\n", (unsigned)TheGameLogic->getFrame(), p ? p->getSide().str() : "?", p ? p->getBaseSide().str() : "?", (int)c, (int)cash, (int)gEcon.configured);
++	if (c < 0 || !gEcon.configured) return;
++	if (cash > 0) gEcon.minted[c] += cash;
++	if (gEcon.pools && gEcon.joinInject > 0) { gEcon.pool[c] += gEcon.joinInject; gEcon.minted[c] += gEcon.joinInject; }
++}
++void UmEconRent( const Player *p, Int amount )
++{
++	Int c = UmEconCurrency(p); if (c >= 0 && gEcon.configured && gEcon.pools && amount > 0) gEcon.pool[c] += amount;
++}
++void UmEconDestroyed( const Player *p, Int amount )
++{
++	Int c = UmEconCurrency(p); if (c < 0 || amount <= 0) return;
++	gEcon.minted[c] -= amount; if (gEcon.minted[c] < 0) gEcon.minted[c] = 0;
++}
++// MSG_UM_ECON_TICK, once per rent cycle: args = pools, inflation, depot%, derrick%, other%, seed, join inject, baseline GDP, max multiplier (permille), pool decay (permille per cycle)
++void UmEconTick( Int pools, Int inflation, Int pDepot, Int pDerrick, Int pOther, Int seed, Int joinInject, Int baseline, Int maxMult, Int decay )
++{
++	static const NameKeyType centerKey = TheNameKeyGenerator->nameToKey( "SupplyCenterDockUpdate" );
++	UmEconState &e = gEcon;
++	e.configured = TRUE; e.pools = pools != 0; e.inflation = inflation != 0; e.split[0] = pDepot; e.split[1] = pDerrick; e.split[2] = pOther;
++	e.joinInject = joinInject; e.baseline = baseline > 0 ? baseline : 1; e.maxMult = maxMult < 1000 ? 1000 : maxMult; e.decayPermille = decay;
++	if (!e.seeded) { e.seeded = TRUE; for (Int c = 0; c < UM_CUR_COUNT; ++c) e.pool[c] += seed; }
++	Int depots[UM_CUR_COUNT] = { 0, 0, 0 };
++	for (Object *o = TheGameLogic->getFirstObject(); o; o = o->getNextObject())
++	{
++		if (o->isEffectivelyDead() || o->getStatusBits().test(OBJECT_STATUS_UNDER_CONSTRUCTION) || !o->findUpdateModule(centerKey)) continue;
++		Int c = UmEconCurrency(o->getControllingPlayer()); if (c >= 0) ++depots[c];
++	}
++	e.depotSpent.clear();
++	for (Int c = 0; c < UM_CUR_COUNT; ++c)
++	{
++		for (Int k = 0; k < UM_CAT_COUNT; ++k) { e.pool[c] += e.budget[c][k]; e.budget[c][k] = 0; }   // what was not paid out goes back
++		if (e.inflation && e.decayPermille > 0)
++		{	// deflation: a slice of the pool is taxed away and leaves the money supply
++			Int burn = (Int)((long long)e.pool[c] * e.decayPermille / 1000); e.pool[c] -= burn; e.minted[c] -= burn; if (e.minted[c] < 0) e.minted[c] = 0;
++		}
++		Int total = e.pool[c], given = 0;
++		if (e.pools)
++			for (Int k = 0; k < UM_CAT_COUNT; ++k) { e.budget[c][k] = (Int)((long long)total * e.split[k] / 100); given += e.budget[c][k]; }
++		e.pool[c] = total - given;
++		e.depotCap[c] = depots[c] > 0 ? e.budget[c][UM_CAT_DEPOT] / depots[c] : 0;
++		Int mult = e.inflation ? (Int)((long long)e.minted[c] * 1000 / e.baseline) : 1000;
++		e.multPermille[c] = mult < 1000 ? 1000 : (mult > e.maxMult ? e.maxMult : mult);
++	}
++	if (getenv("UM_TRACE_CMD")) printf("[um] economy tick: pools %d inflation %d, usd %d cny %d ils %d, depots %d/%d/%d\n", e.pools, e.inflation, e.pool[0], e.pool[1], e.pool[2], depots[0], depots[1], depots[2]);
++}
++void UmEconXfer( Xfer *x )
++{
++	UmEconState &e = gEcon;
++	XferVersion v = 1; x->xferVersion( &v, 1 );
++	x->xferBool(&e.configured); x->xferBool(&e.pools); x->xferBool(&e.inflation); x->xferBool(&e.seeded);
++	for (Int k = 0; k < UM_CAT_COUNT; ++k) x->xferInt(&e.split[k]);
++	for (Int c = 0; c < UM_CUR_COUNT; ++c)
++	{
++		x->xferInt(&e.pool[c]); x->xferInt(&e.depotCap[c]); x->xferInt(&e.minted[c]); x->xferInt(&e.multPermille[c]);
++		for (Int k = 0; k < UM_CAT_COUNT; ++k) x->xferInt(&e.budget[c][k]);
++	}
++	x->xferInt(&e.joinInject); x->xferInt(&e.baseline); x->xferInt(&e.maxMult); x->xferInt(&e.decayPermille);
++	Int n = (Int)e.depotSpent.size(); x->xferInt(&n);
++	if (x->getXferMode() == XFER_LOAD)
++	{
++		e.depotSpent.clear();
++		for (Int i = 0; i < n; ++i) { Int id = 0, spent = 0; x->xferInt(&id); x->xferInt(&spent); e.depotSpent[id] = spent; }
++	}
++	else
++		for (std::map<Int, Int>::iterator it = e.depotSpent.begin(); it != e.depotSpent.end(); ++it) { Int id = it->first, spent = it->second; x->xferInt(&id); x->xferInt(&spent); }
++}
++void UmEconReset( void ) { gEcon = UmEconState(); }
 +#endif
 +
  // ------------------------------------------------------------------------------------------------
  // ------------------------------------------------------------------------------------------------
  static void checkForDuplicateColors( GameInfo *game )
-@@ -774,7 +901,7 @@
+@@ -774,7 +1061,7 @@
  			playerTemplateIdx = GameLogicRandomValue(0, ThePlayerTemplateStore->getPlayerTemplateCount()-1);
  #endif
  			const PlayerTemplate* pt = ThePlayerTemplateStore->getNthPlayerTemplate(playerTemplateIdx);
@@ -5924,7 +6456,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  			{
  #ifdef MORE_RANDOM
  				DEBUG_CRASH(("should not be possible"));
-@@ -792,10 +919,11 @@
+@@ -792,10 +1079,11 @@
  		if (colorIdx < 0 || colorIdx >= TheMultiplayerSettings->getNumColors())
  		{
  			DEBUG_ASSERTCRASH(colorIdx == -1, ("Non-random bad color %d in slot %d\n", colorIdx, i));
@@ -5937,7 +6469,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  					colorIdx = -1;
  			}
  			DEBUG_LOG(("Setting color %d to %d\n", i, colorIdx));
-@@ -817,6 +945,10 @@
+@@ -817,6 +1105,10 @@
    DEBUG_ASSERTCRASH( md , ("Could not find map %s in the mapcache", game->getMap().str()));
  	if (md)
  		numPlayers = md->m_numPlayers;
@@ -5948,7 +6480,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  
  	// generate a map of start spot distances
  	Real startSpotDistance[MAX_SLOTS][MAX_SLOTS];
-@@ -1079,6 +1211,9 @@
+@@ -1079,6 +1371,9 @@
  	
  	if( m_loadScreen )
  		m_loadScreen->update( progress );
@@ -5958,7 +6490,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  
  }  // end updateLoadProgress
  
-@@ -1101,6 +1236,25 @@
+@@ -1101,6 +1396,25 @@
  // ------------------------------------------------------------------------------------------------
  /** Entry point for starting a new game, the engine is already in clean state at this
  	* point and ready to load up with all the data */
@@ -5984,7 +6516,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  // ------------------------------------------------------------------------------------------------
  void GameLogic::startNewGame( Bool loadingSaveGame )
  {
-@@ -1157,7 +1311,10 @@
+@@ -1157,7 +1471,10 @@
  			m_startNewGame = TRUE;
  			return;
  
@@ -5996,7 +6528,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  
  	}  // end if
  
-@@ -1178,7 +1335,7 @@
+@@ -1178,7 +1495,7 @@
  	GameInfo *game = NULL;
  	TheGameInfo = NULL;
  	Int localSlot = 0;
@@ -6005,7 +6537,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  	{
  		if (TheLAN)
  		{
-@@ -1540,7 +1697,7 @@
+@@ -1540,7 +1857,7 @@
  				if (count)
  				{
  					ScriptList *pSL = TheSidesList->getSideInfo(0)->getScriptList();
@@ -6014,7 +6546,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  					while (next)
  					{
  						Script *dupe = next->duplicate();
-@@ -1794,6 +1951,9 @@
+@@ -1794,6 +2111,9 @@
  			Coord3D pos = *pMapObj->getLocation();
  			pos.z += TheTerrainLogic->getGroundHeight( pos.x, pos.y );
  			Real angle = normalizeAngle(pMapObj->getAngle());
@@ -6024,7 +6556,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  			if (thingTemplate->isKindOf(KINDOF_OPTIMIZED_TREE)) {
  				// Opt trees and props just get drawables to tell the client about it, then deleted. jba [6/5/2003]
  				// This way there is no logic object to slow down partition manager and core logic stuff.				
-@@ -1845,6 +2005,9 @@
+@@ -1845,6 +2165,9 @@
  			Coord3D pos = *pMapObj->getLocation();
  			pos.z += TheTerrainLogic->getGroundHeight( pos.x, pos.y );
  			Real angle = normalizeAngle(pMapObj->getAngle());
@@ -6034,7 +6566,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  			if (thingTemplate->isKindOf(KINDOF_OPTIMIZED_TREE)) {
  				// Opt trees and props just get drawables to tell the client about it, then deleted. jba [6/5/2003]
  				// This way there is no logic object to slow down partition manager and core logic stuff.
-@@ -1993,6 +2156,9 @@
+@@ -1993,6 +2316,9 @@
  
  
  
@@ -6044,7 +6576,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  				placeNetworkBuildingsForPlayer(i, slot, player, pt);
  			}
  
-@@ -2092,7 +2258,12 @@
+@@ -2092,7 +2418,12 @@
  
  	// final step, run newMap for all players
  	if( loadingSaveGame == FALSE )
@@ -6057,7 +6589,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  
  	if ( isChallengeCampaign )
  	{
-@@ -3650,6 +3821,9 @@
+@@ -3650,6 +3981,9 @@
  	// would be getting the CRC anyway, so replays can get the CRCs from the exact instant in time as the original.
  	Bool isMPGameOrReplay = (TheRecorder && TheRecorder->isMultiplayer() && getGameMode() != GAME_SHELL && getGameMode() != GAME_NONE);
  	Bool isSoloGameOrReplay = (TheRecorder && !TheRecorder->isMultiplayer() && getGameMode() != GAME_SHELL && getGameMode() != GAME_NONE);
@@ -6067,7 +6599,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  	Bool generateForMP = (isMPGameOrReplay && (m_frame % TheGameInfo->getCRCInterval()) == 0);
  #if defined(_DEBUG) || defined(_INTERNAL)
  	Bool generateForSolo = isSoloGameOrReplay && ((m_frame && (m_frame%100 == 0)) ||
-@@ -3690,6 +3864,12 @@
+@@ -3690,6 +4024,12 @@
  
  	// process client commands
  	{
@@ -6080,12 +6612,22 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  		processCommandList( TheCommandList );
  	}
  
-@@ -4691,13 +4871,22 @@
+@@ -4475,6 +4815,9 @@
+ // ------------------------------------------------------------------------------------------------
+ void GameLogic::crc( Xfer *xfer )
+ {
++#ifdef UM_LW
++	UmEconXfer(xfer);
++#endif
+ 
+ }  // end crc
+ 
+@@ -4691,13 +5034,25 @@
  {
    
  	// version
 -	const XferVersion currentVersion = 10;
-+	const XferVersion currentVersion = 11;   // 11: Living World adds the logic RNG state
++	const XferVersion currentVersion = 12;   // 11: Living World adds the logic RNG state; 12: and the economy (pools, GDP)
  	XferVersion version = currentVersion;
  	xfer->xferVersion( &version, currentVersion );
  
@@ -6100,11 +6642,14 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
 +		xfer->xferUnsignedInt(&rngBase);
 +		if (xfer->getXferMode() == XFER_LOAD) SetGameLogicRandomState(rngState, rngBase);
 +	}
++#ifdef UM_LW
++	if (version >= 12) UmEconXfer(xfer);
++#endif
 +
  	//
  	// note that we do not do the id counter here, we did it in the game state block because
  	// it's important to do that part very early in the load process
-@@ -4808,6 +4997,15 @@
+@@ -4808,6 +5163,15 @@
  
  		}  // end for, i
  
@@ -6122,7 +6667,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GameEngine/Source
  	// campaign info
 diff -ruN a/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp b/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp
 --- a/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp	2026-10-13 16:49:45.069305412 +0100
-+++ b/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp	2026-10-15 22:40:01.475626182 +0100
++++ b/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp	2026-10-16 19:22:06.315404948 +0100
 @@ -435,7 +435,7 @@
  					maxFPS = TheGlobalData->m_framesPerSecondLimit;
  				DEBUG_LOG(("Setting max FPS limit to %d FPS\n", maxFPS));
@@ -6132,7 +6677,22 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp b/GameEngin
  			}
  
  			// prepare for new game
-@@ -624,6 +624,53 @@
+@@ -451,6 +451,14 @@
+ 		//---------------------------------------------------------------------------------------------
+ 		case GameMessage::MSG_CLEAR_GAME_DATA:
+ 		{
++#ifdef UM_LW
++			if (getenv("UM_CLIENT"))
++			{	// Living World client: "Exit" leaves the world. There is no main menu or score screen to return to (pushing the score screen crashed),
++				// so the game closes; the server keeps the base as an absent player's and the same key gets it back.
++				printf("[um] client: exit chosen in the game menu: closing\n"); fflush(stdout);
++				ExitProcess(0);
++			}
++#endif
+ 
+ #if defined(_DEBUG) || defined(_INTERNAL)
+ 			if (TheDisplay && TheGlobalData->m_dumpAssetUsage)
+@@ -624,6 +632,61 @@
  			break;
  		}
  
@@ -6164,6 +6724,14 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp b/GameEngin
 +			UmCharge(msg->getArgument(0)->integer, msg->getArgument(1)->integer);
 +			break;
 +		}
++		case GameMessage::MSG_UM_ECON_TICK:
++		{
++			extern void UmEconTick(Int, Int, Int, Int, Int, Int, Int, Int, Int, Int);
++			if (msg->getArgumentCount() >= 10)
++				UmEconTick(msg->getArgument(0)->integer, msg->getArgument(1)->integer, msg->getArgument(2)->integer, msg->getArgument(3)->integer, msg->getArgument(4)->integer,
++					msg->getArgument(5)->integer, msg->getArgument(6)->integer, msg->getArgument(7)->integer, msg->getArgument(8)->integer, msg->getArgument(9)->integer);
++			break;
++		}
 +		case GameMessage::MSG_UM_REFILL_SUPPLY:
 +		{
 +			extern void UmRefillSupply(Int cash);
@@ -6186,7 +6754,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp b/GameEngin
  		case GameMessage::MSG_ENABLE_RETALIATION_MODE:
  		{
  			//Logically turns on or off retaliation mode for a specified player.
-@@ -1397,6 +1444,9 @@
+@@ -1397,6 +1460,9 @@
  			loc = msg->getArgument( 1 )->location;
  			angle = msg->getArgument( 2 )->real;
  
@@ -6196,7 +6764,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp b/GameEngin
  			if( place == NULL || constructorObject == NULL )
  				break;  //These are not crashes, as the object may have died before this message came in
  
-@@ -1766,7 +1816,7 @@
+@@ -1766,7 +1832,7 @@
  						if (beaconDrawable)
  						{
  							UnicodeString s;
@@ -6205,7 +6773,7 @@ diff -ruN a/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp b/GameEngin
  							{
  								s.concat( msg->getArgument(i)->wChar );
  							}
-@@ -1788,7 +1838,7 @@
+@@ -1788,7 +1854,7 @@
  			if (msg->getArgument(0)->boolean)
  			{
  				// transfer control to any living ally

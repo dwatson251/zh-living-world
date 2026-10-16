@@ -38,7 +38,7 @@ typedef std::list<UmPlaying *> PlayList;
 class UmAudioManager : public NullAudioManager
 {
 public:
-	UmAudioManager() : m_cacheBytes(0), m_deviceOk(false), m_started(0), m_failed(0), m_lastLog(0), m_ambientPaused(false) {}
+	UmAudioManager() : m_resumeMs(0), m_resumeUntil(0), m_resumeSwapped(false), m_cacheBytes(0), m_deviceOk(false), m_started(0), m_failed(0), m_lastLog(0), m_ambientPaused(false) {}
 	virtual ~UmAudioManager() { stopAllNow(); uma_shutdown(); }
 
 	virtual Bool isMusicAlreadyLoaded(void) const { return TRUE; }   // no "insert the CD" prompt
@@ -56,6 +56,7 @@ public:
 	}
 	virtual void update()
 	{
+		umResumeTick();
 		AudioManager::update();
 		processRequestList();
 		processPlayingList();
@@ -213,6 +214,34 @@ private:
 	void doPause(UmPlaying *p) { uma_pause(p->snd, 1); p->paused = true; }
 	void doResume(UmPlaying *p) { uma_pause(p->snd, 0); p->paused = false; }
 
+public:
+	// Living World: a world snapshot reload restarts the game's music from the top; the client remembers the track and position and puts them back
+	bool umMusicPosition(AsciiString *name, unsigned *ms) const { const UmPlaying *p = findMusic(); if (!p) return false; *name = p->ev->getEventName(); *ms = uma_cursor_ms(p->snd); return true; }
+	// the reload restarts the map's music a moment later (or starts another track): wait up to 15 s for a freshly started stream, then put ours back
+	void umResumeMusic(const AsciiString &name, unsigned ms) { m_resumeName = name; m_resumeMs = ms; m_resumeUntil = GetTickCount() + 15000; m_resumeSwapped = false; }
+	void umResumeTick()
+	{
+		if (m_resumeName.isEmpty()) return;
+		if ((int)(GetTickCount() - m_resumeUntil) > 0) { m_resumeName.clear(); return; }
+		const UmPlaying *p = findMusic();
+		if (!p) return;
+		if (uma_cursor_ms(p->snd) > 3000) return;   // still the old stream: the restart has not come yet
+		if (p->ev->getEventName() == m_resumeName)
+		{
+			uma_seek_ms(p->snd, m_resumeMs);
+			printf("[um] audio: music %s resumed at %u ms after the world reload\n", m_resumeName.str(), m_resumeMs);
+			m_resumeName.clear();
+		}
+		else if (!m_resumeSwapped)
+		{	// another track started: play the one that was on
+			m_resumeSwapped = true;
+			TheAudio->removeAudioEvent(AHSV_StopTheMusic);
+			AudioEventRTS track(m_resumeName); TheAudio->addAudioEvent(&track);
+		}
+	}
+	unsigned m_resumeUntil; bool m_resumeSwapped;
+	AsciiString m_resumeName; unsigned m_resumeMs;
+private:
 	const UmPlaying *findMusic() const
 	{
 		for (PlayList::const_iterator it = m_streams.begin(); it != m_streams.end(); ++it)
@@ -477,8 +506,12 @@ private:
 	}
 };
 
+static UmAudioManager *gUmAudio = NULL;
 AudioManager *UmCreateRealAudio()
 {
 	UmAudioManager *a = new UmAudioManager;
+	gUmAudio = a;
 	return a;
 }
+bool UmMusicSave(AsciiString *name, unsigned *ms) { return gUmAudio && gUmAudio->umMusicPosition(name, ms); }
+void UmMusicResume(const AsciiString &name, unsigned ms) { if (gUmAudio && !name.isEmpty()) gUmAudio->umResumeMusic(name, ms); }

@@ -72,3 +72,17 @@ Everything below was decided without you while you were away. Each item says wha
 28. **Default map is london-medium.** Small maps have 15-24 spawn spots, so a small world holds roughly 10-20 players; medium 60-90.
 29. **Deadzone and save interval follow the size** when left on "auto" (120/250/400 m; 5/10/15 min).
 30. The 0.0.1-alpha.13 codenames (london, ...) keep working and mean the large maps; their world folders move to <city>-large.
+
+## Playtest fixes (2026-10-16, evening)
+31. **"Exit" in the game menu closes the game.** A Living World client has no main menu or score screen to go back to (pushing the score screen
+    is what crashed). Your base stays on the server as an absent player's for `absent_secs` and you get it back by joining again. Alternative:
+    reopen the launcher instead of closing.
+32. **After a scheduled save/reload, the music continues from where it was** (same track, same position) and the camera keeps its place. If the
+    reload starts a different track, the client switches back to the one that was playing.
+
+## Economy and spectating (2026-10-16)
+- "Arms Dealer" (a GLA War Factory in Zero Hour, no income) is read as the Black Market. The 30% group is Black Market, Supply Drop Zone, hackers and supply crates; combat income (bounty, salvage, POW) stays unlimited.
+- Pool defaults: 50,000 per currency at world start and 2,000 added per join (settings), because with an empty pool every generator would pay 0 until the first rent. Pools can be switched off (`pools = 0`).
+- Inflation baseline 200,000 GDP and a 300% cap are guesses to tune. A cancelled build refunds the price at cancel time, so a price change in between shifts the refund a little (prices change once per cycle).
+- Spectators are not queued automatically any more; the player asks from the Esc menu. The Restart/Surrender button is hidden for seat holders (it has no meaning in a persistent world).
+- Floating +$ text uses the local player's currency symbol even for other players' generators.

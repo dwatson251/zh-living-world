@@ -9,7 +9,7 @@
 #include <string.h>
 #include <string>
 
-enum { ID_NAME = 100, ID_FACTION, ID_COLOR, ID_SERVER, ID_GAMEDIR, ID_BROWSE, ID_WINDOWED, ID_START, ID_STATUS, ID_RES };
+enum { ID_NAME = 100, ID_FACTION, ID_COLOR, ID_SERVER, ID_GAMEDIR, ID_BROWSE, ID_WINDOWED, ID_START, ID_STATUS, ID_RES, ID_SPECTATE };
 
 struct Faction { const char *label; const char *templ; };
 static const Faction kFactions[] = {
@@ -22,7 +22,7 @@ static const Faction kFactions[] = {
 };
 static const char *kResolutions[] = { "1024x768", "1280x720", "1600x900", "1920x1080" };
 
-static HWND gName, gFaction, gColor, gServer, gGameDir, gMode, gStatus, gRes;
+static HWND gName, gFaction, gColor, gServer, gGameDir, gMode, gStatus, gRes, gSpectate;
 static const char *kModes[] = { "Windowed", "Borderless fullscreen", "Exclusive fullscreen" };
 static COLORREF gColorValue = RGB(220, 40, 40);
 static COLORREF gCustom[16];
@@ -87,6 +87,7 @@ static void start(HWND owner)
 	int mode = (int)SendMessageA(gMode, CB_GETCURSEL, 0, 0); if (mode < 0) mode = 1;
 	iniSet("name", name); iniSet("server", server); iniSet("gamedir", dir); iniSet("faction", kFactions[fi].templ);
 	char c[16]; sprintf(c, "%06x", (unsigned)(GetRValue(gColorValue) << 16 | GetGValue(gColorValue) << 8 | GetBValue(gColorValue))); iniSet("color", c);
+	const bool spectate = SendMessageA(gSpectate, BM_GETCHECK, 0, 0) == BST_CHECKED; iniSet("spectate", spectate ? "1" : "0");
 	iniSet("mode", mode == 0 ? "windowed" : mode == 1 ? "borderless" : "exclusive"); iniSet("resolution", kResolutions[ri]);
 
 	char self[MAX_PATH]; GetModuleFileNameA(NULL, self, MAX_PATH); char *sl = strrchr(self, '\\'); if (sl) *sl = 0;
@@ -98,6 +99,7 @@ static void start(HWND owner)
 	SetEnvironmentVariableA("UM_FACTION", kFactions[fi].templ);
 	SetEnvironmentVariableA("UM_COLOR", c);
 	SetEnvironmentVariableA("UM_KEY", identityKey().c_str());
+	SetEnvironmentVariableA("UM_SPECTATE", spectate ? "1" : "0");   // watch the whole map; join the queue from the game menu when ready
 	std::string cmd = "\"" + exe + "\"";
 	int w = 1280, h = 720; sscanf(kResolutions[ri], "%dx%d", &w, &h);
 	if (mode == 0) cmd += " -win";
@@ -137,8 +139,10 @@ static LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l)
 		SendMessageA(gRes, CB_SETCURSEL, rsel, 0);
 		gMode = CreateWindowA("COMBOBOX", "", WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST, 276, 194, 124, 200, h, (HMENU)ID_WINDOWED, NULL, NULL);
 		{ std::string wantM = iniGet("mode", "borderless"); int msel = wantM == "windowed" ? 0 : wantM == "exclusive" ? 2 : 1; for (int i = 0; i < 3; ++i) SendMessageA(gMode, CB_ADDSTRING, 0, (LPARAM)kModes[i]); SendMessageA(gMode, CB_SETCURSEL, msel, 0); }
-		HWND st = CreateWindowA("BUTTON", "Start", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 150, 236, 250, 34, h, (HMENU)ID_START, NULL, NULL);
-		gStatus = CreateWindowA("STATIC", "", WS_CHILD | WS_VISIBLE, 14, 282, 390, 36, h, (HMENU)ID_STATUS, NULL, NULL);
+		gSpectate = CreateWindowA("BUTTON", "Spectate (watch the whole map, join later from the menu)", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 14, 232, 390, 22, h, (HMENU)ID_SPECTATE, NULL, NULL); SendMessageA(gSpectate, WM_SETFONT, (WPARAM)font, TRUE);
+		if (iniGet("spectate", "0") == "1") SendMessageA(gSpectate, BM_SETCHECK, BST_CHECKED, 0);
+		HWND st = CreateWindowA("BUTTON", "Start", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 150, 264, 250, 34, h, (HMENU)ID_START, NULL, NULL);
+		gStatus = CreateWindowA("STATIC", "", WS_CHILD | WS_VISIBLE, 14, 310, 390, 36, h, (HMENU)ID_STATUS, NULL, NULL);
 		HWND kids[] = { gName, gFaction, gColor, gServer, gGameDir, gRes, gMode, st, gStatus };
 		for (int i = 0; i < 9; ++i) SendMessageA(kids[i], WM_SETFONT, (WPARAM)font, TRUE);
 		return 0;
@@ -178,7 +182,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR cmdLine, int show)
 	for (int i = 0; i < 16; ++i) gCustom[i] = RGB(i * 16, 255 - i * 16, (i * 37) & 255);
 	WNDCLASSA wc; memset(&wc, 0, sizeof wc); wc.lpfnWndProc = proc; wc.hInstance = inst; wc.hCursor = LoadCursor(NULL, IDC_ARROW); wc.hIcon = LoadIcon(inst, MAKEINTRESOURCE(1)); wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1); wc.lpszClassName = "LivingWorldLauncher";
 	RegisterClassA(&wc);
-	RECT r = { 0, 0, 420, 330 }; AdjustWindowRect(&r, WS_CAPTION | WS_SYSMENU, FALSE);
+	RECT r = { 0, 0, 420, 358 }; AdjustWindowRect(&r, WS_CAPTION | WS_SYSMENU, FALSE);
 	HWND w = CreateWindowA("LivingWorldLauncher", "Living World", WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, NULL, NULL, inst, NULL);
 	ShowWindow(w, show);
 	if (cmdLine && strstr(cmdLine, "--start")) PostMessageA(w, WM_COMMAND, ID_START, 0);   // start straight away with the saved choices (for scripts and shortcuts)

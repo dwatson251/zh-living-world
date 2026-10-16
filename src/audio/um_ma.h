@@ -18,7 +18,8 @@ void uma_set_volume(UmaSound *s, float v);             /* 0..1+ */
 void uma_set_pan(UmaSound *s, float p);                /* -1 left .. 1 right */
 void uma_set_pitch(UmaSound *s, float p);
 int  uma_finished(UmaSound *s);                        /* played to its end (never true for looping sounds) */
-unsigned uma_cursor_ms(UmaSound *s);                   /* playback position, for diagnostics */
+unsigned uma_cursor_ms(UmaSound *s);                   /* playback position */
+void uma_seek_ms(UmaSound *s, unsigned ms);             /* jump to a position */
 float uma_length_ms(const void *data, unsigned size);  /* duration of a file, 0 if unknown */
 #ifdef __cplusplus
 }

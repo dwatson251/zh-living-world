@@ -33,8 +33,14 @@ World rules (all adjustable by the server)
 ------------------------------------------
 - Spawn protection: when you join, you and everything you own take no damage and computer players leave you alone for a few minutes (3 by default). Your buildings and units glow red-gold while it lasts.
   Reconnecting does not renew it until 15 minutes after it ended. The server sets the length (immunity_secs, 0 = off) and the cooldown (immunity_cooldown_secs).
+- Spectate: tick "Spectate" in the launcher to watch the whole map without a seat. When the world is full you arrive as a spectator too, and a knocked-out player becomes
+  one after a short Defeated message. Press Esc: Continue, Join Queue (shows your place in line, e.g. Join Queue (2), once asked) or Exit.
 - Rent is due every 15 minutes (the first full period is free, a server setting: rent_grace_cycles): the larger of a minimum and a share of what you own, or a flat amount. It can only be paid with a command center.
   A panel at the bottom left, above the control bar, counts down to the next payment, shows how many unpaid stacks you have, and the time left on your protection. You hear the cash sound when rent is paid.
+- Money: every faction has its own currency (USA dollars $, China yuan Y, GLA shekels S). Rent goes into a pool for your faction group. Each rent cycle the pool is split:
+  60% to supply depots (shared equally), 10% to oil derricks, 30% to the other money makers (Black Market, hackers, supply drops). When a share is used up those income
+  sources pay $0 until the next cycle (supply drop planes carry no crates). The Black Lotus cash hack steals from a player and is not limited. The server admin window and
+  status page show the pools. Inflation (off by default, server setting) raises prices and rent as the faction group's money supply (GDP) grows.
 - Unpaid rent stacks. Each stack hurts more, and the damage lands in order: your fighting units first; when none are left your buildings (not the command center);
   then dozers and workers; the command center last. Paying a stack off needs a command center and cash.
 - Knocking out a player's last unit pays you a share of their cash plus a flat amount, if you were the last to hit them within the last 5 minutes.

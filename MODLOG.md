@@ -319,3 +319,43 @@ the host, map codenames in docker-compose comments, each map with its own persis
   stale frame into the old state (the joiner's bind was lost or moved to frame 0). Now nothing runs between UmStartWorld and GameLogic's real start
   (UmNetWorldStarting, called from startNewGame after the deferral, for fresh starts and snapshot loads). Checks: 45-slot desert x2, Paris medium x2
   (join at frame 1), Paris medium snapshot join with epochs, London small, London large: 0 mismatches.
+
+## Playtest bugs: factions, settings (2026-10-16)
+- Faction choice ignored for every general: the launcher sends e.g. FactionChinaTankGeneral, whose Side is "ChinaTankGeneral" (BaseSide "China"); the
+  server only accepted Side America/China/GLA and fell back to the slot's default. Now the base side counts too. Verified: Tank_ChinaCommandCenter +
+  Tank_ChinaVehicleDozer, green house colour (colour was already honoured).
+- Settings "not taking effect": the host passes every setting (verified end to end with LW_IMMUNITY_SECS=20, LW_RENT_GRACE_CYCLES=0, LW_RENT_MINUTES=1:
+  protection 600 frames, rent each minute from the first). Three ways a change could still look ignored, all addressed:
+  the host window kept the values it read at start-up and overwrote hand edits of um_server.ini (it now reloads the file on Start when it changed
+  on disk and says so in the log); a resumed world kept each player's rent schedule from their first join (players who have not paid yet now follow
+  the current interval and grace); and nothing showed the values in use (the server logs "server settings: ..." at start).
+  Note: UM_* variables set by hand in the environment are not passed through by the host on purpose; the supported variables are LW_<SETTING>.
+
+## Playtest bugs: epoch reload control, music, Exit (2026-10-16)
+- Control after a scheduled epoch: the reload rebuilds the player list with the map's default local player, and the client only applied its seat
+  when the seat changed, so the player was left watching. The seat is re-applied after every reload (selection, shroud, control bar), and the
+  camera keeps its position, angle and zoom.
+- Music: the reload restarts the map's music from the top. The client notes the track and position and, when the game starts the music again,
+  seeks to where it was (or switches back to the track that was playing). Needed uma_seek_ms in the miniaudio wrapper.
+- Exit in the game menu crashed (Shell pushes the score screen, ScoreScreen::hideWindows on missing windows). A client now closes on Exit; the
+  server keeps the base as an absent player's.
+- Found while testing: a server and a client on the same PC share Documents\...\Save. Each snapshot load deleted every .map there
+  (clearScratchPadMaps) and extracted the map to the same name, so one process deleted or overwrote the other's map mid-load: "epoch reload
+  FAILED" (TeamFactory prototype count mismatch) or a crash in W3DTerrainVisual::xfer. Each process now extracts to <map>_<pid>_<n>.map and
+  leaves other processes' copies alone. Test: London small, epochs every 1500 frames, 4 reloads on both sides, 0 mismatches, music resumed each time,
+  test Exit (UM_TEST_EXIT_FRAME) closed the client cleanly.
+
+## Spectate mode, queue and defeat splash (2026-10-16)
+- Launcher: "Spectate" checkbox (`UM_SPECTATE=1`, saved in client.ini). Protocol v6: hello carries the flag, new `T_JOIN` (client asks for a seat) and `T_QUEUE` (position, total).
+- Server: a spectator, or anyone arriving while the world is full, is no longer auto-queued; they watch (slot -1, full-map `ReplayObserver` view) until they send `T_JOIN`. A returning player with a base takes it back through `T_JOIN`. Eliminated or expired players keep their connection and become spectators instead of being closed.
+- Client: permanent top-left "Spectator view, Open Menu (Esc) to Join" (queued: "in the queue (X of Y)"), a "DEFEATED" splash for ~4.5 s after a knock-out, no more 8 s exit (only a "replaced by a new connection" kick still closes). Game menu (`QuitMenu.cpp`, `UmQuitMenuRefresh`): Continue / Join Queue (X) greyed once asked / Exit, relabelling the retail buttons because the `.wnd` layout is in the .big files; Surrender/Restart is hidden for seat holders.
+- Tested: `tools/spectate_test.sh` (full world: carol watches, asks, is queued at 1, promoted when alice's base falls; dave stays unqueued; 0 mismatches). Not yet checked on screen (desktop/graphics step pending).
+
+## Faction currencies, money pools and inflation (2026-10-16)
+- Sim state `gEcon` (GameLogic.cpp, API in `src/net/um_economy.h`), in `GameLogic::xfer` (version 12) and `GameLogic::crc`; it changes only through `MSG_UM_ECON_TICK` (server, once per rent cycle; carries the settings), `UmCharge` (rent goes into the pool of the payer's currency), `UmBindPlayer` (join cash counts as GDP, optional pool top-up) and `UmGrantCash` (bonuses count as GDP).
+- Currency = faction group of the player (side "America"/base side "USA" -> USD $, China -> CNY yen, GLA -> ILS shekel); every group has its own pool.
+- Each cycle: unspent budgets fold back into the pool, the pool is split 60/10/30 (settings) into depot / derrick / other budgets; the depot budget is divided equally per supply center (`depotCap`). Income calls draw through `UmEconDraw`: supply center (`SupplyCenterDockUpdate`), oil derrick and Black Market / Supply Drop Zone (`AutoDepositUpdate`, by KindOf), hackers (`HackInternetAIUpdate`), supply crates (`MoneyCrateCollide`). An empty budget pays 0; supply drop planes throw their crates away when the 'other' budget is empty (`DeliverPayloadAIUpdate`). Black Lotus cash hack, bounties, salvage and the initial capture bonus are not limited.
+- Inflation (`UM_INFLATION`, off by default): price level = GDP (cash minted by joins and bonuses, minus pool tax and the cash of players who leave) / baseline, clamped to [1, max]; applied in `ThingTemplate::calcCostToBuild` (so rent by value, bounties and sell value follow) and to a flat rent. Deflation: `UM_DEFLATION_PERMILLE` of the pool is burned per cycle, players leaving destroy their cash.
+- Currency symbols: money display (`InGameUI`), floating +/- cash text (`GameTextManager::fetch` for GUI:AddCash / GUI:LoseCash, local player's currency) and the rent panel. Yen and shekel are U+00A5 / U+20AA; the GDI font renderer takes any glyph the face has. Not yet checked on screen.
+- Host: new `[economy]` settings (`kSettings`), `economy` block in status.json, a pool panel in the admin window and cards on the web status page.
+- Tested: `tools/economy_test.sh` (server + late replica, short cycles, pools and inflation on, 4 AI): 0 mismatches in 6 runs; persist/snap tests unchanged. With 6 AI the same scenario desyncs in 3 of 4 runs even with pools off (`POOLS=0`): an existing early-join desync around frame 2370 (Chinook supply behaviour), not caused by the economy. `snap_test.sh` without `RELOAD=1` also mismatches without the economy xfer; `RELOAD=1` (the in-process path the server uses) is clean.

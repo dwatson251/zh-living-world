@@ -36,4 +36,6 @@ bool UmNetRentInfo(UmRentInfo *out);
 unsigned UmNetSpeed();   // logic frames per second of this world
 void UmLoadStage(const char *text); void UmLoadTick(const char *what, int pct); void UmLoadDone(void); void UmDrawLoadStatus(void);   // the client's loading overlay (um_hud.cpp)
 void UmDrawRentHud(void);   // client: the rent/protection panel (src/client/um_hud.cpp), called from InGameUI::postDraw   // client: the server's latest word on our rent and spawn protection (false until the first message)
+void UmNetRequestJoin();                 // client (watching): ask the server to put us in the queue for a seat
+void UmNetQueueInfo(int *pos, int *total);   // client: our place in the queue (pos 0 = not queued, -1 = asked, no answer yet) and how many wait
 int UmNetMySlot();   // client: the seat the server gave us (-1: watching only)

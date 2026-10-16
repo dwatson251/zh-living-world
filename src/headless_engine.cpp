@@ -121,6 +121,7 @@ public:
 void UmLoadStage(const char *) {} void UmLoadTick(const char *, int) {} void UmLoadDone(void) {} void UmDrawLoadStatus(void) {}
 void UmOutOfMemory(int) {}
 void UmShowFatal(const char *) {}
+int gUmTopReserve = 0;
 void UmDrawRentHud(void) {}   // the headless build draws nothing
 class UmAudio : public NullAudioManager { public: virtual Bool isMusicAlreadyLoaded(void) const { return TRUE; } };  // no CD prompt
 
@@ -234,3 +235,7 @@ protected:
 };
 
 GameEngine *CreateGameEngine(void) { return NEW UmGameEngine; }
+
+// the headless build has no audio: nothing to keep across a snapshot reload
+bool UmMusicSave(AsciiString *, unsigned *) { return false; }
+void UmMusicResume(const AsciiString &, unsigned) {}

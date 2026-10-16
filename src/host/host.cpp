@@ -52,6 +52,16 @@ static const Setting kSettings[] = {
 	{ "rent_damage_percent",    "Damage per unpaid stack (%)",      "1",                "--rent-damage",        "rules" },
 	{ "absent_minutes",         "Keep an absent base (minutes)",    "30",               "--absent-minutes",     "rules" },
 	{ "combat_secs",            "Combat grace period (seconds)",    "30",               "--combat-secs",        "rules" },
+	{ "pools",                  "Money pools cap generator income (1 = on)","1",        "--pools",              "economy" },
+	{ "pool_seed",              "Pool: starting amount per currency","50000",           "--pool-seed",          "economy" },
+	{ "pool_join",              "Pool: added when a player joins",  "2000",             "--pool-join",          "economy" },
+	{ "pool_depot_percent",     "Pool share: supply depots (%)",    "60",               "--pool-depot",         "economy" },
+	{ "pool_derrick_percent",   "Pool share: oil derricks (%)",     "10",               "--pool-derrick",       "economy" },
+	{ "pool_other_percent",     "Pool share: Black Market, hackers, supply drops (%)","30","--pool-other",      "economy" },
+	{ "inflation",              "Inflation: prices and rent follow GDP (1 = on)","0",   "--inflation",          "economy" },
+	{ "gdp_baseline",           "Inflation: GDP at which prices start to rise","200000","--gdp-baseline",       "economy" },
+	{ "inflation_max_percent",  "Inflation: highest price level (%)","300",             "--inflation-max",      "economy" },
+	{ "deflation_permille",     "Deflation: pool tax per cycle (per mille)","20",       "--deflation",          "economy" },
 };
 static const int kNumSettings = sizeof(kSettings) / sizeof(kSettings[0]);
 static const int kMapSetting = 2;   // the "map" row is a drop-down
@@ -265,6 +275,9 @@ struct Runner
 		sprintf(b, "%d", num(cfg, "immunity_secs", 180) * 30); env.push_back(std::string("UM_IMMUNE_FRAMES=") + b);
 		sprintf(b, "%d", num(cfg, "immunity_cooldown_secs", 900) * 30); env.push_back(std::string("UM_IMMUNE_COOLDOWN_FRAMES=") + b);
 		sprintf(b, "%d", num(cfg, "rent_damage_percent", 1) * 10); env.push_back(std::string("UM_RENT_DMG_PERMILLE=") + b);
+		env.push_back("UM_POOLS=" + cfg["pools"]); env.push_back("UM_POOL_SEED=" + cfg["pool_seed"]); env.push_back("UM_POOL_JOIN=" + cfg["pool_join"]);
+		env.push_back("UM_POOL_DEPOT=" + cfg["pool_depot_percent"]); env.push_back("UM_POOL_DERRICK=" + cfg["pool_derrick_percent"]); env.push_back("UM_POOL_OTHER=" + cfg["pool_other_percent"]);
+		env.push_back("UM_INFLATION=" + cfg["inflation"]); env.push_back("UM_GDP_BASELINE=" + cfg["gdp_baseline"]); env.push_back("UM_INFLATION_MAX=" + cfg["inflation_max_percent"]); env.push_back("UM_DEFLATION_PERMILLE=" + cfg["deflation_permille"]);
 		if (fileExists(worldDir + "\\epoch.sav")) env.push_back("UM_RESUME=1");
 
 		// environment block: ours plus the UM_ variables
@@ -310,11 +323,12 @@ struct Runner
 static Runner gRunner;
 
 // ------------------------------------------------------------------------------------------------ status
+struct EcoRow { bool valid; int pool, depots, derricks, other, gdp; double mult; EcoRow() : valid(false), pool(0), depots(0), derricks(0), other(0), gdp(0), mult(1.0) {} };
 struct PlayerRow { int slot; std::string name, faction; bool online; int missed; unsigned absentSecs; bool expiring; };
 struct Status
 {
-	bool valid; std::string name, map; unsigned uptime, frame, gameSeconds, connections, queue, aiActive, humanSlots, humanFree, mismatches, maxAi, maxPlayers; std::vector<PlayerRow> players;
-	Status() : valid(false), uptime(0), frame(0), gameSeconds(0), connections(0), queue(0), aiActive(0), humanSlots(0), humanFree(0), mismatches(0), maxAi(0), maxPlayers(0) {}
+	bool valid; std::string name, map; unsigned uptime, frame, gameSeconds, connections, queue, aiActive, humanSlots, humanFree, mismatches, maxAi, maxPlayers; std::vector<PlayerRow> players; EcoRow eco[3]; bool pools, inflation;
+	Status() : valid(false), uptime(0), frame(0), gameSeconds(0), connections(0), queue(0), aiActive(0), humanSlots(0), humanFree(0), mismatches(0), maxAi(0), maxPlayers(0), pools(false), inflation(false) {}
 };
 static std::string jstr(const std::string &j, const std::string &key, size_t from = 0, size_t to = std::string::npos)
 {
@@ -330,6 +344,19 @@ static Status readStatus(const std::string &worldDir)
 	s.connections = (unsigned)atoi(jstr(j, "connections").c_str()); s.queue = (unsigned)atoi(jstr(j, "queue").c_str()); s.aiActive = (unsigned)atoi(jstr(j, "aiActive").c_str());
 	s.humanSlots = (unsigned)atoi(jstr(j, "humanSlots").c_str()); s.humanFree = (unsigned)atoi(jstr(j, "humanFree").c_str()); s.mismatches = (unsigned)atoi(jstr(j, "mismatches").c_str());
 	s.maxAi = (unsigned)atoi(jstr(j, "maxAi").c_str()); s.maxPlayers = (unsigned)atoi(jstr(j, "maxPlayers").c_str());
+	{	// money pools per faction currency
+		size_t ec = j.find("\"economy\":{");
+		if (ec != std::string::npos)
+		{
+			s.pools = jstr(j, "pools", ec) == "true"; s.inflation = jstr(j, "inflation", ec) == "true"; static const char *keys[] = { "usd", "cny", "ils" };
+			for (int c = 0; c < 3; ++c)
+			{
+				size_t o = j.find(std::string("\"") + keys[c] + "\":{", ec); if (o == std::string::npos) continue; size_t e = j.find('}', o); if (e == std::string::npos) continue;
+				EcoRow &r = s.eco[c]; r.valid = true; r.pool = atoi(jstr(j, "pool", o, e).c_str()); r.depots = atoi(jstr(j, "depots", o, e).c_str()); r.derricks = atoi(jstr(j, "derricks", o, e).c_str());
+				r.other = atoi(jstr(j, "other", o, e).c_str()); r.gdp = atoi(jstr(j, "gdp", o, e).c_str()); r.mult = atof(jstr(j, "priceMultiplier", o, e).c_str());
+			}
+		}
+	}
 	if (pl != std::string::npos)
 	{
 		size_t p = pl;
@@ -351,13 +378,14 @@ static const char *kPage =
 ":root{--bg:#10151b;--fg:#e6edf3;--mut:#8b98a5;--card:#18202a;--ok:#3fb950;--warn:#d29922;--bad:#f85149}@media(prefers-color-scheme:light){:root{--bg:#f6f8fa;--fg:#1f2328;--mut:#59636e;--card:#fff}}"
 "body{margin:0;padding:16px;background:var(--bg);color:var(--fg);font:15px system-ui,sans-serif;max-width:760px;margin:auto}h1{font-size:20px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}"
 ".c{background:var(--card);border-radius:8px;padding:12px}.c b{display:block;font-size:22px}.c span{color:var(--mut);font-size:13px}table{width:100%;border-collapse:collapse;margin-top:14px}td,th{padding:6px 4px;text-align:left;border-bottom:1px solid #8884}"
-".ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}</style><h1 id=nm>Living World <small id=st class=ok></small></h1><div class=grid id=g></div>"
+".ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}</style><h1 id=nm>Living World <small id=st class=ok></small></h1><div class=grid id=g></div><h2 style=\"font-size:16px;margin:18px 0 8px\">Money pools</h2><div class=grid id=eco></div>"
 "<table><thead><tr><th>Seat<th>Player<th>Faction<th>State<th>Rent<th>Absent</thead><tbody id=t></tbody></table><script>"
 "const f=n=>n.toLocaleString();const e=s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));"
 "async function tick(){try{const s=await (await fetch('status.json',{cache:'no-store'})).json();document.getElementById('st').textContent='online';"
 "document.getElementById('nm').firstChild.textContent=(s.name||'Living World')+' ';"
 "const u=s.uptimeSeconds,cards=[['Uptime',Math.floor(u/3600)+'h '+Math.floor(u%3600/60)+'m'],['Players',s.players.filter(p=>p.online).length+' / '+s.maxPlayers],['Seats free',s.humanFree],['Waiting',f(s.queue)],['AI',s.aiActive+' / '+s.maxAi],['Desyncs',f(s.mismatches)]];"
 "document.getElementById('g').innerHTML=cards.map(c=>'<div class=c><b>'+c[1]+'</b><span>'+c[0]+'</span></div>').join('');"
+"const E=s.economy||{},sy={usd:'$',cny:'\\u00a5',ils:'\\u20aa'};document.getElementById('eco').innerHTML=['usd','cny','ils'].filter(k=>E[k]).map(k=>{const q=E[k];return '<div class=c><b>'+sy[k]+f(q.pool+q.depots+q.derricks+q.other)+'</b><span>'+k.toUpperCase()+' pool: depots '+f(q.depots)+', derricks '+f(q.derricks)+', other '+f(q.other)+(E.inflation?'; prices x'+q.priceMultiplier.toFixed(2)+', GDP '+f(q.gdp):'')+'</span></div>'}).join('')||'<div class=c><span>'+(E.pools===false?'Pools are off':'No data yet')+'</span></div>';"
 "document.getElementById('t').innerHTML=s.players.map(p=>'<tr><td>#'+p.slot+'<td>'+e(p.name||'?')+'<td>'+e((p.faction||'').replace('Faction',''))+'<td class='+(p.expiring?'bad':p.online?'ok':'warn')+'>'+(p.expiring?'leaving':p.online?'online':'absent')+'<td class='+(p.missedRent?'bad':'')+'>'+(p.missedRent?p.missedRent+' unpaid':'paid')+'<td>'+(p.absentSeconds?Math.floor(p.absentSeconds/60)+'m':'')).join('');"
 "}catch(x){const el=document.getElementById('st');el.textContent='offline';el.className='bad'}}tick();setInterval(tick,5000);</script>";
 
@@ -416,7 +444,7 @@ static int runCli(Config cfg)
 
 // ------------------------------------------------------------------------------------------------ window
 enum { ID_START = 1000, ID_STOP, ID_SAVE, ID_OPENPAGE, ID_FIREWALL, ID_BROWSE, ID_EDIT0 = 2000, ID_TIMER = 1 };
-static HWND gWnd, gStateLbl, gInfoLbl, gPlayers, gLogBox, gEdits[64], gStartBtn, gStopBtn;
+static HWND gWnd, gStateLbl, gInfoLbl, gEconLbl, gPlayers, gLogBox, gEdits[64], gStartBtn, gStopBtn;
 static size_t gLogShown = 0;
 
 static std::string getText(HWND h) { char b[1024]; GetWindowTextA(h, b, sizeof b); return b; }
@@ -438,6 +466,15 @@ static void refreshUi()
 	if (gRunner.wanted && s.valid) sprintf(b, "Uptime %s   Game time %s\r\nConnected %u   Seats free %u / %u   Waiting %u\r\nAI active %u / %u   Desyncs %u   Restarts %d", fmtDuration(s.uptime).c_str(), fmtDuration(s.gameSeconds).c_str(), s.connections, s.humanFree, s.humanSlots, s.queue, s.aiActive, s.maxAi, s.mismatches, gRunner.restarts);
 	else strcpy(b, "No data yet.");
 	SetWindowTextA(gInfoLbl, b);
+	{	// money pools: what is in the pool and in this cycle's budgets (depots / derricks / other generators), and the price level when inflation is on
+		static const char *names[] = { "USD $", "CNY Y", "ILS S" }; std::string e = "Money pools" + std::string(s.pools ? "" : " (off)") + (s.inflation ? "   inflation on" : "") + "\r\n";
+		for (int c = 0; c < 3; ++c)
+		{
+			char l[200]; if (!s.eco[c].valid) { sprintf(l, "%s: -\r\n", names[c]); e += l; continue; }
+			const EcoRow &r = s.eco[c]; sprintf(l, "%s  pool %d   depots %d   derricks %d   other %d   GDP %d   prices x%.2f\r\n", names[c], r.pool, r.depots, r.derricks, r.other, r.gdp, r.mult); e += l;
+		}
+		SetWindowTextA(gEconLbl, (gRunner.wanted && s.valid) ? e.c_str() : "");
+	}
 	// players list
 	SendMessageA(gPlayers, LB_RESETCONTENT, 0, 0);
 	for (size_t i = 0; gRunner.wanted && i < s.players.size(); ++i)
@@ -473,7 +510,24 @@ static void tailServerLog()
 	fclose(f);
 }
 
-static void onStart() { Config c = configFromUi(); saveConfig(c, gIniPath); gRunner.restarts = 0; gLogShown = 0; if (gRunner.start(c)) ensureHttp(); }
+// um_server.ini edited by hand while the window was open: the file wins (the window showed the values it read at start-up and would overwrite the edit)
+static unsigned long long gIniStamp = 0;
+static unsigned long long iniStamp() { WIN32_FILE_ATTRIBUTE_DATA a; if (!GetFileAttributesExA(gIniPath.c_str(), GetFileExInfoStandard, &a)) return 0; return ((unsigned long long)a.ftLastWriteTime.dwHighDateTime << 32) | a.ftLastWriteTime.dwLowDateTime; }
+static void fillUiFromConfig(const Config &cfg)
+{
+	for (int i = 0; i < kNumSettings; ++i)
+	{
+		Config::const_iterator it = cfg.find(kSettings[i].key); std::string v = it != cfg.end() ? it->second : std::string();
+		if (i == kMapSetting) { std::string code, sm; resolveMap(v, code, sm); int sel = -1; for (int k = 0; k < kNumMaps; ++k) if (code == kMaps[k].code) sel = k; if (sel >= 0) SendMessageA(gEdits[i], CB_SETCURSEL, sel, 0); else SetWindowTextA(gEdits[i], v.c_str()); }
+		else SetWindowTextA(gEdits[i], v.c_str());
+	}
+}
+static void onStart()
+{
+	unsigned long long st = iniStamp();
+	if (st && gIniStamp && st != gIniStamp) { fillUiFromConfig(loadConfig(gIniPath)); logLine("um_server.ini changed on disk: settings reloaded from the file."); }
+	Config c = configFromUi(); saveConfig(c, gIniPath); gIniStamp = iniStamp(); gRunner.restarts = 0; gLogShown = 0; if (gRunner.start(c)) ensureHttp();
+}
 static void onBrowse()
 {
 	BROWSEINFOA bi; memset(&bi, 0, sizeof bi); bi.hwndOwner = gWnd; bi.lpszTitle = "Select the Command & Conquer Generals - Zero Hour folder"; bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
@@ -492,7 +546,7 @@ static LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l)
 	{
 	case WM_CREATE:
 	{
-		HFONT font = (HFONT)GetStockObject(DEFAULT_GUI_FONT); Config cfg = loadConfig(gIniPath);
+		HFONT font = (HFONT)GetStockObject(DEFAULT_GUI_FONT); Config cfg = loadConfig(gIniPath); gIniStamp = iniStamp();
 		int y = 10;
 		for (int i = 0; i < kNumSettings; ++i)
 		{
@@ -517,11 +571,12 @@ static LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l)
 		{ HWND b = CreateWindowA("BUTTON", "Allow through Windows Firewall", WS_CHILD | WS_VISIBLE, 10, y + 40, 220, 24, h, (HMENU)ID_FIREWALL, NULL, NULL); SendMessageA(b, WM_SETFONT, (WPARAM)font, TRUE); }
 		gStateLbl = CreateWindowA("STATIC", "State: Stopped", WS_CHILD | WS_VISIBLE, 400, 10, 400, 20, h, NULL, NULL, NULL); SendMessageA(gStateLbl, WM_SETFONT, (WPARAM)font, TRUE);
 		gInfoLbl = CreateWindowA("STATIC", "", WS_CHILD | WS_VISIBLE, 400, 34, 480, 58, h, NULL, NULL, NULL); SendMessageA(gInfoLbl, WM_SETFONT, (WPARAM)font, TRUE);
-		HWND pl = CreateWindowA("STATIC", "Players", WS_CHILD | WS_VISIBLE, 400, 96, 100, 16, h, NULL, NULL, NULL); SendMessageA(pl, WM_SETFONT, (WPARAM)font, TRUE);
-		gPlayers = CreateWindowExA(WS_EX_CLIENTEDGE, "LISTBOX", "", WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOSEL, 400, 114, 480, 150, h, NULL, NULL, NULL);
+		gEconLbl = CreateWindowA("STATIC", "", WS_CHILD | WS_VISIBLE, 400, 96, 480, 52, h, NULL, NULL, NULL); SendMessageA(gEconLbl, WM_SETFONT, (WPARAM)font, TRUE);
+		HWND pl = CreateWindowA("STATIC", "Players", WS_CHILD | WS_VISIBLE, 400, 152, 100, 16, h, NULL, NULL, NULL); SendMessageA(pl, WM_SETFONT, (WPARAM)font, TRUE);
+		gPlayers = CreateWindowExA(WS_EX_CLIENTEDGE, "LISTBOX", "", WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOSEL, 400, 170, 480, 100, h, NULL, NULL, NULL);
 		{ HFONT mono = CreateFontA(14, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, 0, FIXED_PITCH, "Consolas"); SendMessageA(gPlayers, WM_SETFONT, (WPARAM)mono, TRUE);
-		  HWND ll = CreateWindowA("STATIC", "Log", WS_CHILD | WS_VISIBLE, 400, 272, 100, 16, h, NULL, NULL, NULL); SendMessageA(ll, WM_SETFONT, (WPARAM)font, TRUE);
-		  gLogBox = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", "", WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL, 400, 290, 480, y + 64 - 290 > 120 ? y + 64 - 290 : 240, h, NULL, NULL, NULL); SendMessageA(gLogBox, WM_SETFONT, (WPARAM)mono, TRUE); }
+		  HWND ll = CreateWindowA("STATIC", "Log", WS_CHILD | WS_VISIBLE, 400, 276, 100, 16, h, NULL, NULL, NULL); SendMessageA(ll, WM_SETFONT, (WPARAM)font, TRUE);
+		  gLogBox = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", "", WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL, 400, 294, 480, y + 64 - 294 > 120 ? y + 64 - 294 : 240, h, NULL, NULL, NULL); SendMessageA(gLogBox, WM_SETFONT, (WPARAM)mono, TRUE); }
 		SetTimer(h, ID_TIMER, 1000, NULL);
 		return 0;
 	}
@@ -530,7 +585,7 @@ static LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l)
 		{
 		case ID_START: onStart(); refreshUi(); return 0;
 		case ID_STOP: gRunner.stop(); refreshUi(); return 0;
-		case ID_SAVE: saveConfig(configFromUi(), gIniPath); logLine("Settings saved to " + gIniPath); return 0;
+		case ID_SAVE: saveConfig(configFromUi(), gIniPath); gIniStamp = iniStamp(); logLine("Settings saved to " + gIniPath); return 0;
 		case ID_BROWSE: onBrowse(); return 0;
 		case ID_OPENPAGE: { std::string u = "http://localhost:" + getText(gEdits[5]) + "/"; ShellExecuteA(h, "open", u.c_str(), NULL, NULL, SW_SHOW); return 0; }
 		case ID_FIREWALL: onFirewall(); return 0;
