@@ -51,7 +51,8 @@ jobs:
           z = zipfile.ZipFile(os.environ["ZIP"])
           names = set(z.namelist())
           need = ["LivingWorld/zh_client.exe", "LivingWorld/zh_launcher.exe", "LivingWorld/zh_host.exe",
-                  "LivingWorld/um_server.ini", "LivingWorld/README.txt", "LivingWorld/version.txt"]
+                  "LivingWorld/um_server.ini", "LivingWorld/README.txt", "LivingWorld/version.txt",
+                  "LivingWorld/cities/london.lwcity", "LivingWorld/cities/newyork.lwcity", "LivingWorld/cities/paris.lwcity", "LivingWorld/cities/dubai.lwcity"]
           missing = [n for n in need if n not in names]
           bad = [n for n in names if n.lower().endswith((".big", ".w3d", ".tga", ".dds", ".bik", ".wav", ".mp3", ".ini")) and not n.endswith("um_server.ini")]
           print("entries:", sorted(names))

@@ -22,7 +22,7 @@ void NullTerrainVisual::removeFactionBibDrawable(Drawable * factionBuilding) { }
 void NullTerrainVisual::removeAllBibs() { }
 void NullTerrainVisual::removeBibHighlighting() { }
 void NullTerrainVisual::removeTreesAndPropsForConstruction(const Coord3D * pos, const GeometryInfo & geom, Real angle) { }
-void NullTerrainVisual::addProp(const ThingTemplate * tt, const Coord3D * pos, Real angle) { }
+void NullTerrainVisual::addProp(const ThingTemplate * tt, const Coord3D * pos, Real angle, Real scale) { }
 void NullTerrainVisual::setRawMapHeight(const ICoord2D * gridPos, Int height) { }
 Int NullTerrainVisual::getRawMapHeight(const ICoord2D * gridPos) { typedef Int UMRet; return UMRet(); }
 void NullTerrainVisual::replaceSkyboxTextures(const AsciiString ** oldTexName, const AsciiString ** newTexName) { }

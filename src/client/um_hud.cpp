@@ -9,6 +9,7 @@
 #include "GameClient/GameWindow.h"
 #include "GameClient/GameWindowManager.h"
 #include "GameClient/ControlBar.h"
+#include "GameClient/InGameUI.h"
 #include "Common/NameKeyGenerator.h"
 #include "GameLogic/GameLogic.h"
 #include "net/um_net.h"
@@ -27,7 +28,8 @@ DisplayString *line(int i)
 	if (!gLine[i])
 	{
 		gLine[i] = TheDisplayStringManager->newDisplayString();
-		gLine[i]->setFont(TheFontLibrary->getFont(AsciiString("Arial"), TheGlobalLanguageData->adjustFontSize(18), TRUE));
+		// exactly the font of the game's on-screen messages ("Joining the world: catching up ...")
+		gLine[i]->setFont(TheFontLibrary->getFont(TheInGameUI->umMessageFontName(), TheGlobalLanguageData->adjustFontSize(TheInGameUI->umMessagePointSize()), TheInGameUI->umMessageBold()));
 	}
 	return gLine[i];
 }

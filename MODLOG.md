@@ -222,3 +222,86 @@ Terrain heights/LOS/cliff come from src/um/um_terrain.* (copied from BaseHeightM
 - Protection defaults: 3 minutes, 15 minute cooldown against reconnect abuse. Grace default stays at 1 cycle = the old "first interval free" behaviour.
 - The panel uses the Arial font at 18 px (scaled with the resolution like other in-game text).
 - Rent-paid sound is the stock "MoneyWithdrawSound".
+
+## Late-join desync in worlds with an AI pool, panel font (2026-10-15)
+- Symptom: a client joining a fresh server (45 slots: 16 seats + 24 AI pool + 4 AI) reported CRC DIVERGED from its first check (frame 30), then the retail main menu showed and the client crashed (user report). Reproduced on Windows only,
+  with the published 0.0.1-alpha.6 build too, so it is not Wine and not the sound/HUD/protection work.
+- Cause: the server's first AI joins at logic frame 0 (a command batch for frame 0). The retail menu's *shell map* is a running game: the client's network layer ran against it, and when MSG_NEW_GAME arrived the real world started and
+  ran its frame 0 in the same GameLogic::update, before the network layer got a turn, so the frame-0 batch was never queued (the client's first look at the world was frame 1 or 2). Small worlds without an AI pool have no frame-0 batch.
+- Fix: `UmNetPreFrame(frame)` is called from GameLogic::update right before processCommandList (not in the shell game) and queues the recorded batch for exactly that frame; the replica's per-update logic ignores the shell game.
+  Result: 45-slot fresh join 0 mismatches (crc-ok 99); epoch-snapshot late join 0 mismatches. Also a null guard in startNewGame (multiplayer scripts) for a first side without a script list (the crash site in the user's dump).
+- The rent/protection panel now uses the font of the game's on-screen messages (InGameUI::umMessageFontName/PointSize/Bold) instead of a fixed 18 px.
+
+## Real-city maps, spawn lots + deadzone, one world per map (2026-10-15/16, unattended)
+User asked: one persistent world per map, one big map for 128 players, built from real cities at real size (London, New York, Paris, Dubai) with
+surrounding areas, random spawns with a deadzone (no space = no join), push the engine, partial rendering if needed. Mid-run additions: a map drop-down in
+the host, map codenames in docker-compose comments, each map with its own persistent world.
+
+### Scale and engine limits (tools/bigmap_bench.sh, generated maps of N cells)
+- Scale: a civilian car is 22 units long and a town house ~50 x 32 units, so 1 unit = 0.2 m; a terrain cell (10 units) = 2 m. City maps are 5000 x 5000
+  cells = 10 x 10 km (the engine carries 6000 cells; 5000 leaves the client room for 150k scenery props).
+- Crashes and walls found on the way, all fixed: pathfinder zones were 14-bit cells / 16-bit tables and a 24000-entry stack array (crash above ~1250 cells);
+  zone merging rewrote the whole table per merge (quadratic: minutes of load at 2400 cells; now union-find, same result); zone updates for every structure
+  walked every zone block of the map; A* costs were 16-bit; partition cells hold shroud/threat/cash for 137 players (~1.7 KB each: 600 MB at 2400 cells) ->
+  partition cell size doubles until a side has <= 512 cells (derived from the map, same on every process); the sync CRC xfer'd every partition cell's
+  shroud every 30 frames -> a rotating 1/16 slice (objects are still checked in full); the exe was not large-address-aware (2 GB) -> /LARGEADDRESSAWARE.
+- Results, server with 8 AI (uncapped): 800 cells 300 MB; 2400 cells 940 MB / 45 fps before the partition fix -> 540 MB / ~140 fps after; 4000 cells 1.04 GB
+  ~130 fps; 6000 cells 1.38 GB steady (2.2 GB peak while generating) ~150 fps. London city map: server 1.22 GB ~135 fps, client 1.75 GB.
+- Harness lesson: another session ran lw_killall.sh in the same tree at the same time; my benchmark servers "vanished" with no crash record. My runs now use
+  renamed copies (build/citybench/zh_city*.exe) and kill only their own PIDs; never run lw_killall.sh while another session works here.
+
+### City maps
+- `tools/citygen/citygen.py <city>` (uv: osmium, shapely, numpy, pillow, rasterio, scipy): Geofabrik OSM extract + Copernicus GLO-30 tiles -> `cities/<city>.lwcity`
+  (zlib: height, surface class, flags per cell; buildings as min-area rectangles with height/use; trees, bushes, parked cars along streets, POIs, spawn lots).
+  The DEM is a surface model: buildings removed with a 90 m grey opening + Gaussian; relief compressed into the 0-255 height range (London 3..70 m -> 3 steps/m).
+  Sea = low ground connected to the map edge. Bridges are drawn over water as land, so units cross where the real bridges are. Dense unlabelled ground -> paving.
+  Spawn lots: open ground (parks) first, then cleared "building sites" on a jittered grid, 520 m apart, 120 m radius, flattened; buildings on them demolished.
+- `src/client/citymap.cpp` builds the map on each machine from the pack + the player's own files (Tournament Desert for sides/lighting/world info; texture
+  classes by Terrain.ini name; tile counts from the TGA headers). Buildings: best-fitting civilian model per footprint (scaled 0.8-1.6, repeated along long
+  terraces); up to 6 per lot are real, garrisonable objects, the rest are drawn-only props ("lwProp"/"lwScale" map-object keys) over cliff-flagged (impassable)
+  cells. One water plane over the whole map; river beds and sea lie below it. map.ini adds optimised-tree types for the game's own oak/birch/palm/bush models
+  (map.ini is an override file: modules go inside AddModule). POIs -> tech buildings (fuel -> oil derrick, hospital, power -> refinery, airfield -> reinforcement pad).
+  London: 207 lots, 1232 real buildings, ~152k drawn buildings, 100k trees/bushes, 41k cars; map file 247 MB, built in 6 s.
+- Snapshots no longer embed generated city maps: GameStateMap writes "LWMAPREF1 <pack> <crc>"; a loading process builds the map from its own pack, checks the
+  CRC and copies it into place (an epoch with a 247 MB map embedded would not work).
+- Props: sector culling (800-unit sectors), drawing only visible props, shroud status refreshed lazily via a generation counter (notifyShroudChanged walked every
+  prop on every shroud cell change: the client stalled), cheap distance reject in removePropsForConstruction. Caps: props 200k, trees 200k (vertex buffer 65k).
+  The server skips props and optimised trees (client-only). While catching up, the client draws one frame in 30.
+
+### Spawn lots + deadzone
+- The server reads LW_Lot_<n> waypoints; a new base goes to a random lot where no object of any slot player is within UM_SPAWN_DEADZONE (host: spawn_deadzone in
+  metres, default 400 m = 2000 units) and no bind was sent in the last 900 frames nearby. The spot travels in MSG_UM_BIND_PLAYER (args 8, 9) and UmBindPlayer
+  moves the slot's start waypoint there before placing the base (the AI plans around its command center, not the waypoint, so nothing else needs saving).
+- No free lot: the join is refused (T_KICK with the reason; the client shows it in a message box). AI only joins while more than ai_reserve_lots (default 4) lots
+  are free. status.json gains spawnLots / spawnLotsFree. tools/spawn_test.sh: 10 spawns with a 2.4 km deadzone all kept apart, a late joiner refused: PASS.
+- UM_VERSION 5.
+
+### Host / Docker
+- Map drop-down (editable combo) with codenames london, newyork, paris, dubai, grand, desert (or a .map path); the ini stores the codename. Default map: london.
+- Worlds: <world_dir>\<codename>. A world saved by an older build directly in <world_dir> moves into the folder of the map configured when first seen.
+  host_log.txt and server_log.txt stay in <world_dir> (the Docker entrypoint tails them there). No codename starts with a dot (the Wine prefix is .wineprefix).
+- docker-compose.yml lists the codenames in comments; LW_SPAWN_DEADZONE / LW_AI_RESERVE_LOTS. Packages and the image ship cities/*.lwcity.
+
+### Performance and sync round (2026-10-16)
+- 127 players on London (4 start AI + 123 joined, server only, uncapped): before ~7.5 logic fps at frame 7500; profile: StealthUpdate::markAsDetected walked every
+  object of every enemy player for each reveal (O(n^2)). Now a partition range query bounded by the largest vision range in the world (cached per frame):
+  frame 7500 reached in 469 s instead of ~967 s, ~9.5 fps late. Missing-template asserts ("Tech Center", asked by the AI scripts every frame) report once.
+  Conclusion recorded in assumptions.md: the CPU, not the map, sets the player count; 128 AI run the world at about a third of normal speed on this PC.
+- Epochs on city maps: snapshot 347 MB raw because the map-reference check was case-sensitive (the engine passes lower-case paths) -> 88 MB / 4.5 MB
+  compressed. Save+reload 62 s -> ~20 s: classification tests each grid corner's "underwater" once (was 4x per cell), the terrain classification is
+  cached per map, zone passes walk cells column by column (cells are stored per column), the server skips shoreline tiles (null renderer), the
+  epoch file is written compressed ("UMZ1"). clearPassableFlags clears only the blocks marked since the last clear (was all 250 000 per path search);
+  full re-zones happen at most every 300 frames x (map area / 800^2 map), capped at 9000 frames.
+- Desync on big maps after the first epoch (found with new UM_PFDIGEST pathfinder digests + UM_OBJDUMP/UM_OBJDEEP): a live client that was busy
+  (loading a big map) ran past the epoch frame before reading the epoch message, skipped it as "stale", while the server had re-based on its reload.
+  The client now keeps the batches it ran and, on a late epoch, loads it and replays its batches from the epoch frame. Also Pathfinder::loadPostProcess
+  re-zones after every load so the zone schedule cannot depend on the frame counter a process had during the load. 4000-cell test: 0 mismatches.
+- Host: epoch_secs "auto" (300 s, 900 s on city maps); docker-compose.yml lists every setting with its default (tools/gen_compose_env.py rebuilds it from
+  the host's settings table); the ini parser no longer reads a following comment as an empty value (Zero Hour folder showed "; Zero Hour folder ...").
+- Client epoch-load failures (rare, city maps with many AI: a dangling terrain render pointer while reloading in-process) now restart the client, which
+  rejoins with its key as a returning player (tested with the UM_TEST_FAIL_EPOCH hook). A failed copy of the map into the save folder is accepted when an
+  identical-size copy is already there (it was still open from the previous load).
+- Checks on the final build: London 40-AI + seated client with epochs every 2400 frames: 0 mismatches until the renderer-side reload failure above; 4000-cell
+  generated map with epochs: 0 mismatches; 45-slot fresh join on Tournament Desert: 5 of 6 runs 0 mismatches (one run admitted at frame 14 diverged from
+  frame 30, not reproduced); queue_test, return_test (now with protection so the absent base survives the faster sim) and spawn_test pass; persist_test
+  resumes from the compressed epoch (its overlap comparison found no common frames).

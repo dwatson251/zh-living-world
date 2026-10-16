@@ -10,23 +10,49 @@ services:
       - "${LW_PORT:-7777}:7777/tcp"     # game
       - "${LW_STATUS_PORT:-8080}:8080/tcp"   # status page
     volumes:
-      - lw-world:/data/world                          # the saved world (keep this!)
+      - lw-world:/data/world                          # the saved worlds, one folder per map (keep this!)
       - ${ZH_FILES:-/srv/zerohour}:/data/zerohour:ro,z   # YOUR Zero Hour install folder (read-only; ,z = SELinux label for CentOS)
     environment:
-      LW_PORT: "7777"            # port inside the container; change the published port above instead
-      LW_STATUS_PORT: "8080"
-      LW_NAME: "${LW_NAME:-Living World}"
-      LW_MAP: "${LW_MAP:-Maps\\Tournament Desert\\Tournament Desert.map}"
-      LW_MAX_PLAYERS: "${LW_MAX_PLAYERS:-16}"
-      LW_MAX_AI: "${LW_MAX_AI:-16}"
-      LW_START_AI: "${LW_START_AI:-4}"
-      LW_AI_POOL: "${LW_AI_POOL:-24}"
-      LW_GAME_SPEED: "${LW_GAME_SPEED:-30}"
-      LW_EPOCH_SECS: "${LW_EPOCH_SECS:-300}"
-      LW_START_CASH: "${LW_START_CASH:-10000}"
-      LW_RENT_GRACE_CYCLES: "${LW_RENT_GRACE_CYCLES:-1}"          # free rent cycles before the first payment
-      LW_IMMUNITY_SECS: "${LW_IMMUNITY_SECS:-180}"                  # spawn protection for joining players (0 = off)
-      LW_IMMUNITY_COOLDOWN_SECS: "${LW_IMMUNITY_COOLDOWN_SECS:-900}"  # no new protection until this long after the last one ended
-      # every other setting in um_server.ini works the same way: LW_<SETTING_NAME_IN_CAPITALS>
+      # ---- [server]
+      LW_NAME: "${LW_NAME:-Living World}"                    # Server name
+      # Map codenames (each map keeps its own persistent world in the volume, /data/world/<codename>; switch freely and come back):
+      #   london   London, real city from OpenStreetMap, 10 x 10 km, up to 128 players
+      #   newyork  New York (Midtown, Lower Manhattan, Brooklyn, Queens, Jersey City), 10 x 10 km, up to 128 players
+      #   paris    Paris, 10 x 10 km, up to 128 players
+      #   dubai    Dubai (Downtown, Business Bay, Jumeirah), 10 x 10 km, up to 128 players
+      #   grand    Living World Grand: generated hills, 1.6 km, up to 128 players
+      #   desert   Tournament Desert: the small retail map
+      # (a path such as "Maps\\Some Map\\Some Map.map" also works)
+      LW_MAP: "${LW_MAP:-london}"                            # Map (codename or .map path)
+      LW_PORT: "7777"                                        # Game port (inside the container; change the published port above)
+      LW_STATUS_PORT: "8080"                                 # Status page port (0 = off) (inside the container; change the published port above)
+      # ---- [world]
+      LW_MAX_PLAYERS: "${LW_MAX_PLAYERS:-16}"                # Max players (seats)
+      LW_MAX_AI: "${LW_MAX_AI:-16}"                          # Max AI players at once
+      LW_START_AI: "${LW_START_AI:-4}"                       # AI players at world start
+      LW_AI_POOL: "${LW_AI_POOL:-24}"                        # AI seats (at least max AI)
+      LW_GAME_SPEED: "${LW_GAME_SPEED:-30}"                  # Game speed (15-60, default 30)
+      LW_AI_JOIN_SECS: "${LW_AI_JOIN_SECS:-20}"              # Seconds between AI joining
+      LW_EPOCH_SECS: "${LW_EPOCH_SECS:-auto}"                # Save the world every (secs, auto)
+      LW_SPAWN_DEADZONE: "${LW_SPAWN_DEADZONE:-400}"         # Spawn deadzone (metres)
+      LW_AI_RESERVE_LOTS: "${LW_AI_RESERVE_LOTS:-4}"         # Spawn lots kept free for players
+      # ---- [rules]
+      LW_START_CASH: "${LW_START_CASH:-10000}"               # Starting cash
+      LW_LAST_HIT_PERCENT: "${LW_LAST_HIT_PERCENT:-10}"      # Knock-out bonus: % of victim cash
+      LW_LAST_HIT_BONUS: "${LW_LAST_HIT_BONUS:-10000}"       # Knock-out bonus: flat amount
+      LW_LAST_HIT_WINDOW_SECS: "${LW_LAST_HIT_WINDOW_SECS:-300}" # Last hit counts for (seconds)
+      LW_SUPPLY_CASH: "${LW_SUPPLY_CASH:-0}"                 # Supply dock refill: cash per time
+      LW_SUPPLY_INTERVAL_SECS: "${LW_SUPPLY_INTERVAL_SECS:-0}" # Supply dock refill every (secs)
+      LW_RENT_MINUTES: "${LW_RENT_MINUTES:-15}"              # Rent every (minutes)
+      LW_RENT_FIXED: "${LW_RENT_FIXED:-0}"                   # Rent: flat amount (0 = by value)
+      LW_RENT_PERCENT: "${LW_RENT_PERCENT:-5}"               # Rent: % of base value
+      LW_RENT_FLOOR: "${LW_RENT_FLOOR:-500}"                 # Rent: minimum amount
+      LW_RENT_GRACE_CYCLES: "${LW_RENT_GRACE_CYCLES:-1}"     # Rent: free cycles before the first payment
+      LW_IMMUNITY_SECS: "${LW_IMMUNITY_SECS:-180}"           # Spawn protection when joining (seconds, 0 = off)
+      LW_IMMUNITY_COOLDOWN_SECS: "${LW_IMMUNITY_COOLDOWN_SECS:-900}" # Protection is not renewed for (seconds after it ends)
+      LW_RENT_DAMAGE_PERCENT: "${LW_RENT_DAMAGE_PERCENT:-1}" # Damage per unpaid stack (%)
+      LW_ABSENT_MINUTES: "${LW_ABSENT_MINUTES:-30}"          # Keep an absent base (minutes)
+      LW_COMBAT_SECS: "${LW_COMBAT_SECS:-30}"                # Combat grace period (seconds)
+      # every setting above can also be set in um_server.ini; LW_ variables win over the file
 volumes:
   lw-world:

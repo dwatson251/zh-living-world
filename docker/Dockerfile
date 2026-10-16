@@ -16,6 +16,7 @@ COPY --from=wine /opt/wine /opt/wine
 # no Mono/Gecko: wineboot would open an installer dialog and try to download them
 ENV PATH=/opt/wine/bin:$PATH WINEPREFIX=/data/world/.wineprefix WINEDEBUG=-all WINEDLLOVERRIDES="mscoree,mshtml="
 COPY LivingWorld/zh_host.exe LivingWorld/zh_client.exe LivingWorld/um_server.ini /opt/livingworld/
+COPY LivingWorld/cities/ /opt/livingworld/cities/
 COPY docker/entrypoint.sh docker/healthcheck.sh /usr/local/bin/
 RUN mkdir -p /data/world /data/zerohour /data/config && chown -R lw:lw /data
 USER lw

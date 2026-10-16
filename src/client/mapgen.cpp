@@ -16,73 +16,17 @@
 #include <map>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
-typedef unsigned char u8;
+#include "um_mapfile.h"
+using namespace um_map;
 
 namespace
 {
-const int GRAND_CELLS = 800;       // cells per side, including the border (10 world units per cell)
+const int GRAND_CELLS_DEFAULT = 800;   // cells per side, including the border (10 world units per cell); "Living World Grand <n>" asks for n cells
 const int GRAND_BORDER = 35;
 const int GRAND_STARTS = 128;      // the engine holds the observer plus 128 players
-
-struct Chunk { std::string name; unsigned short ver; size_t a, b; };
-
-struct Rng { unsigned s; Rng() : s(12345u) {} unsigned next() { s = s * 1664525u + 1013904223u; return s >> 8; } double uni(double lo, double hi) { return lo + (hi - lo) * (next() / 16777216.0); } };
-
-void put32(std::string &o, unsigned v) { o.append((const char *)&v, 4); }
-void put16(std::string &o, unsigned v) { unsigned short s = (unsigned short)v; o.append((const char *)&s, 2); }
-void putF(std::string &o, float f) { o.append((const char *)&f, 4); }
-void putAscii(std::string &o, const std::string &s) { put16(o, (unsigned)s.size()); o += s; }
-unsigned get32(const std::string &d, size_t p) { unsigned v; memcpy(&v, d.data() + p, 4); return v; }
-unsigned get16(const std::string &d, size_t p) { unsigned short v; memcpy(&v, d.data() + p, 2); return v; }
-
-double smooth(double t) { if (t < 0) t = 0; if (t > 1) t = 1; return t * t * (3 - 2 * t); }
-
-struct Source
-{
-	std::string data; std::map<unsigned, std::string> names; std::map<std::string, unsigned> ids; std::vector<Chunk> chunks;
-	const Chunk *find(const char *n) const { for (size_t i = 0; i < chunks.size(); ++i) if (chunks[i].name == n) return &chunks[i]; return NULL; }
-	bool load(const char *path)
-	{
-		File *f = TheFileSystem->openFile(path, File::READ | File::BINARY); if (!f) return false;
-		Int sz = f->size(); if (sz <= 0) { f->close(); return false; }
-		char *buf = f->readEntireAndClose(); data.assign(buf, sz); delete[] buf;
-		if (CompressionManager::isDataCompressed(data.data(), (Int)data.size()))
-		{
-			Int n = CompressionManager::getUncompressedSize(data.data(), (Int)data.size()); std::string out; out.resize(n);
-			if (CompressionManager::decompressData((void *)data.data(), (Int)data.size(), &out[0], n) != n) return false;
-			data.swap(out);
-		}
-		if (data.size() < 8 || memcmp(data.data(), "CkMp", 4) != 0) return false;
-		int count = (int)get32(data, 4); size_t p = 8;
-		for (int i = 0; i < count; ++i) { unsigned len = (u8)data[p++]; std::string nm = data.substr(p, len); p += len; unsigned id = get32(data, p); p += 4; names[id] = nm; ids[nm] = id; }
-		while (p + 10 <= data.size())
-		{
-			Chunk c; unsigned id = get32(data, p); c.ver = (unsigned short)get16(data, p + 4); int sz2 = (int)get32(data, p + 6);
-			c.name = names.count(id) ? names[id] : std::string(); c.a = p + 10; c.b = p + 10 + sz2; if (c.b > data.size()) return false; chunks.push_back(c); p = c.b;
-		}
-		return true;
-	}
-	std::string chunk(const char *name, unsigned ver, const std::string &body) const { std::string o; put32(o, ids.find(name)->second); put16(o, ver); put32(o, (unsigned)body.size()); return o + body; }
-	std::string copy(const char *name) const { const Chunk *c = find(name); return chunk(name, c->ver, data.substr(c->a, c->b - c->a)); }
-};
-
-void putDictEntry(std::string &o, const Source &src, const char *key, int type, const std::string &val) { put32(o, (src.ids.find(key)->second << 8) | (unsigned)type); o += val; }
-void dBool(std::string &o, const Source &s, const char *k, bool v) { putDictEntry(o, s, k, 0, std::string(1, v ? 1 : 0)); }
-void dInt(std::string &o, const Source &s, const char *k, int v) { std::string x; put32(x, (unsigned)v); putDictEntry(o, s, k, 1, x); }
-void dStr(std::string &o, const Source &s, const char *k, const std::string &v) { std::string x; putAscii(x, v); putDictEntry(o, s, k, 3, x); }
-
-std::string object(const Source &s, float x, float y, float ang, const std::string &name, bool waypoint, int wid, const std::string &uid, const char *layer, const char *owner, const std::string &wname)
-{
-	std::string body; putF(body, x); putF(body, y); putF(body, 0.0f); putF(body, ang); put32(body, 0); putAscii(body, name);
-	std::string d; int n = 0;
-	dInt(d, s, "objectInitialHealth", 100); ++n; dBool(d, s, "objectEnabled", true); ++n; dBool(d, s, "objectIndestructible", false); ++n; dBool(d, s, "objectUnsellable", false); ++n;
-	dBool(d, s, "objectPowered", true); ++n; dBool(d, s, "objectRecruitableAI", true); ++n; dStr(d, s, "originalOwner", owner); ++n; dStr(d, s, "uniqueID", uid); ++n; dStr(d, s, "objectLayer", layer); ++n;
-	dBool(d, s, "objectSelectable", !waypoint); ++n;
-	if (waypoint) { dInt(d, s, "waypointID", wid); ++n; dStr(d, s, "waypointName", wname); ++n; }
-	put16(body, (unsigned)n); body += d;
-	return s.chunk("Object", 3, body);
-}
 
 struct Hills
 {
@@ -97,11 +41,15 @@ struct Hills
 };
 }
 
-// Writes the map if it is not there yet. Returns true when the map file exists afterwards.
-bool UmEnsureGrandMap()
+// Writes the map if it is not there yet. Returns true when the map file exists afterwards. mapPath is the requested map ("...Living World Grand.map", or
+// "...Living World Grand <cells>..." for another size, used to measure how large a map the engine can carry).
+bool UmEnsureGrandMap(const char *mapPath)
 {
-	AsciiString dir = TheGlobalData->getPath_UserData(); dir.concat("Maps\\Living World Grand\\");
-	AsciiString path = dir; path.concat("Living World Grand.map");
+	int cells = GRAND_CELLS_DEFAULT;
+	if (const char *g = strstr(mapPath, "Living World Grand ")) { int n = atoi(g + 19); if (n >= 200 && n <= 20000) cells = n; }
+	AsciiString name("Living World Grand"); if (cells != GRAND_CELLS_DEFAULT) { AsciiString t; t.format(" %d", cells); name.concat(t); }
+	AsciiString dir = TheGlobalData->getPath_UserData(); dir.concat("Maps\\"); dir.concat(name); dir.concat("\\");
+	AsciiString path = dir; path.concat(name); path.concat(".map");
 	{ File *f = TheFileSystem->openFile(path.str(), File::READ | File::BINARY); if (f) { f->close(); return true; } }
 
 	Source src;
@@ -109,7 +57,7 @@ bool UmEnsureGrandMap()
 	const Chunk *hc = src.find("HeightMapData"), *bc = src.find("BlendTileData");
 	if (!hc || !bc || !src.find("SidesList") || !src.find("GlobalLighting") || !src.find("WorldInfo")) { printf("[um] map generator: unexpected map layout\n"); return false; }
 
-	const int W = GRAND_CELLS, H = GRAND_CELLS, B = GRAND_BORDER, inner = W - 2 * B;
+	const int W = cells, H = cells, B = GRAND_BORDER, inner = W - 2 * B;
 	Rng rng; Hills hills(rng);
 	// start spots on a grid of cells, each moved a little off the centre
 	int cols = 1; while (cols * cols < GRAND_STARTS) ++cols;

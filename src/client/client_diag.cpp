@@ -79,7 +79,7 @@ static DWORD WINAPI hangWatch(LPVOID)
 		if (++still < 6 || !gMainThread) continue;
 		if (still > 6) continue;   // once per hang
 		}
-		else if (sampleNo >= 12) continue;
+		else { static int ticks = 0; static const int delay = atoi(getenv("UM_SAMPLE")); if (++ticks * 2 < delay) continue; static const int maxN = getenv("UM_SAMPLE_N") ? atoi(getenv("UM_SAMPLE_N")) : 12; if (sampleNo >= maxN) continue; }   // UM_SAMPLE=<seconds>: start sampling after that long; UM_SAMPLE_N samples (default 12)
 		SuspendThread(gMainThread);
 		CONTEXT ctx; memset(&ctx, 0, sizeof ctx); ctx.ContextFlags = CONTEXT_FULL;
 		if (GetThreadContext(gMainThread, &ctx))

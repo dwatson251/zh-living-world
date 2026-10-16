@@ -28,7 +28,7 @@ public:
 	virtual void removeAllBibs();
 	virtual void removeBibHighlighting();
 	virtual void removeTreesAndPropsForConstruction(const Coord3D * pos, const GeometryInfo & geom, Real angle);
-	virtual void addProp(const ThingTemplate * tt, const Coord3D * pos, Real angle);
+	virtual void addProp(const ThingTemplate * tt, const Coord3D * pos, Real angle, Real scale = 1.0f);
 	virtual void setRawMapHeight(const ICoord2D * gridPos, Int height);
 	virtual Int getRawMapHeight(const ICoord2D * gridPos);
 	virtual void replaceSkyboxTextures(const AsciiString ** oldTexName, const AsciiString ** newTexName);

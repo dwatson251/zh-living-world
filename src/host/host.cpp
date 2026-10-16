@@ -22,7 +22,7 @@ struct Setting { const char *key, *label, *def, *flag, *section; };
 static const Setting kSettings[] = {
 	{ "name",                   "Server name",                      "Living World",     "--name",               "server" },
 	{ "game_dir",               "Zero Hour folder",                 "",                 "--game-dir",           "server" },
-	{ "map",                    "Map",                              "Maps\\Tournament Desert\\Tournament Desert.map", "--map", "server" },
+	{ "map",                    "Map (codename or .map path)",      "london",           "--map",                "server" },
 	{ "host",                   "Listen on (address)",              "0.0.0.0",          "--host",               "server" },
 	{ "port",                   "Game port",                        "7777",             "--port",               "server" },
 	{ "status_port",            "Status page port (0 = off)",       "8080",             "--status-port",        "server" },
@@ -33,7 +33,9 @@ static const Setting kSettings[] = {
 	{ "ai_pool",                "AI seats (at least max AI)",       "24",               "--ai-pool",            "world" },
 	{ "game_speed",             "Game speed (15-60, default 30)",   "30",               "--game-speed",         "world" },
 	{ "ai_join_secs",           "Seconds between AI joining",       "20",               "--ai-join-secs",       "world" },
-	{ "epoch_secs",             "Save the world every (seconds)",   "300",              "--epoch-secs",         "world" },
+	{ "epoch_secs",             "Save the world every (secs, auto)", "auto",            "--epoch-secs",         "world" },
+	{ "spawn_deadzone",         "Spawn deadzone (metres)",          "400",              "--spawn-deadzone",     "world" },
+	{ "ai_reserve_lots",        "Spawn lots kept free for players", "4",                "--ai-reserve-lots",    "world" },
 	{ "start_cash",             "Starting cash",                    "10000",            "--start-cash",         "rules" },
 	{ "last_hit_percent",       "Knock-out bonus: % of victim cash","10",               "--last-hit-percent",   "rules" },
 	{ "last_hit_bonus",         "Knock-out bonus: flat amount",     "10000",            "--last-hit-bonus",     "rules" },
@@ -52,6 +54,34 @@ static const Setting kSettings[] = {
 	{ "combat_secs",            "Combat grace period (seconds)",    "30",               "--combat-secs",        "rules" },
 };
 static const int kNumSettings = sizeof(kSettings) / sizeof(kSettings[0]);
+static const int kMapSetting = 2;   // the "map" row is a drop-down
+
+// Maps the host offers by codename. City maps are built on the host from cities/<codename>.lwcity (OpenStreetMap + Copernicus elevation) and the
+// local game files; every map keeps its own persistent world in <world_dir>\<codename>. A .map path also works (its world folder is named after the map).
+struct MapChoice { const char *code, *label, *serverMap; };
+static const MapChoice kMaps[] = {
+	{ "london",  "London, 10 km", "city:london" },
+	{ "newyork", "New York, 10 km", "city:newyork" },
+	{ "paris",   "Paris, 10 km", "city:paris" },
+	{ "dubai",   "Dubai, 10 km", "city:dubai" },
+	{ "grand",   "generated, 1.6 km", "Maps\\Living World Grand\\Living World Grand.map" },
+	{ "desert",  "retail, small", "Maps\\Tournament Desert\\Tournament Desert.map" },
+};
+static const int kNumMaps = sizeof(kMaps) / sizeof(kMaps[0]);
+// "london", "london  (London: ...)" or a path -> codename (world folder name) and the server's UM_SKIRMISH_MAP value
+static void resolveMap(const std::string &value, std::string &code, std::string &serverMap)
+{
+	std::string v = value; size_t sp = v.find_first_of(" \t"); std::string first = sp == std::string::npos ? v : v.substr(0, sp);
+	for (int i = 0; i < kNumMaps; ++i) if (_stricmp(first.c_str(), kMaps[i].code) == 0) { code = kMaps[i].code; serverMap = kMaps[i].serverMap; return; }
+	for (int i = 0; i < kNumMaps; ++i) if (_stricmp(v.c_str(), kMaps[i].serverMap) == 0) { code = kMaps[i].code; serverMap = kMaps[i].serverMap; return; }
+	serverMap = v;   // a map path: world folder named after the map file
+	size_t a = v.find_last_of("\\/"); std::string leaf = a == std::string::npos ? v : v.substr(a + 1); if (leaf.size() > 4 && _stricmp(leaf.c_str() + leaf.size() - 4, ".map") == 0) leaf.resize(leaf.size() - 4);
+	code.clear(); for (size_t k = 0; k < leaf.size(); ++k) { char ch = leaf[k]; code += (isalnum((unsigned char)ch) ? (char)tolower((unsigned char)ch) : '-'); }
+	if (code.empty() || code[0] == '.' || code[0] == '-') code = "map" + code;
+}
+// the persistent world of a map: <world_dir>\<codename>. A world saved by an older build directly in <world_dir> moves into the folder of the map
+// configured when it is first seen (older builds had one world per server).
+static std::string worldDirFor(const std::map<std::string, std::string> &c, const std::string &hostDir);
 
 typedef std::map<std::string, std::string> Config;
 
@@ -83,6 +113,21 @@ static std::string detectGameDir()
 	return "";
 }
 
+static std::string worldDirFor(const std::map<std::string, std::string> &c, const std::string &hostDir)
+{
+	std::string base = absPath(c.find("world_dir")->second, hostDir), code, serverMap; resolveMap(c.find("map")->second, code, serverMap);
+	CreateDirectoryA(base.c_str(), NULL);
+	std::string dir = base + "\\" + code;
+	if (!fileExists(dir) && fileExists(base + "\\epoch.sav"))
+	{
+		CreateDirectoryA(dir.c_str(), NULL);
+		static const char *files[] = { "epoch.sav", "world.bin", "cmds.log", "frame.txt", "players.txt", "status.json" };
+		for (int i = 0; i < 6; ++i) MoveFileA((base + "\\" + files[i]).c_str(), (dir + "\\" + files[i]).c_str());
+	}
+	CreateDirectoryA(dir.c_str(), NULL);
+	return dir;
+}
+
 // The Windows INI API does not like network-style paths (\\wsl.localhost\...), so the file is read and written directly.
 static std::string trim(std::string v) { size_t a = v.find_first_not_of(" \t\r"); if (a == std::string::npos) return ""; size_t b = v.find_last_not_of(" \t\r"); return v.substr(a, b - a + 1); }
 static Config loadConfig(const std::string &ini)
@@ -94,7 +139,7 @@ static Config loadConfig(const std::string &ini)
 		if (ln.empty() || ln[0] == ';' || ln[0] == '#') continue;
 		if (ln[0] == '[') { size_t c = ln.find(']'); if (c != std::string::npos) section = ln.substr(1, c - 1); continue; }
 		size_t eq = ln.find('='); if (eq == std::string::npos) continue;
-		std::string v = trim(ln.substr(eq + 1)); size_t semi = v.find(" ;"); if (semi != std::string::npos) v = trim(v.substr(0, semi));
+		std::string v = trim(ln.substr(eq + 1)); if (!v.empty() && v[0] == ';') v.clear(); size_t semi = v.find(" ;"); if (semi != std::string::npos) v = trim(v.substr(0, semi));   // an empty value followed by a comment is empty
 		raw[section + "." + trim(ln.substr(0, eq))] = v;
 	}
 	Config c;
@@ -161,8 +206,9 @@ struct Runner
 	}
 	bool launch(bool fresh)
 	{
-		std::string gameDir = cfg["game_dir"]; worldDir = absPath(cfg["world_dir"], gHostDir); CreateDirectoryA(worldDir.c_str(), NULL);
-		serverLog = worldDir + "\\server_log.txt";
+		std::string gameDir = cfg["game_dir"]; worldDir = worldDirFor(cfg, gHostDir);
+		serverLog = absPath(cfg["world_dir"], gHostDir) + "\\server_log.txt";   // one log next to host_log.txt, whichever map runs
+		std::string mapCode, serverMap; resolveMap(cfg["map"], mapCode, serverMap);
 		int startAi = num(cfg, "start_ai", 4), players = num(cfg, "max_players", 16), maxAi = num(cfg, "max_ai", 16), pool = std::max(num(cfg, "ai_pool", 24), maxAi);
 		std::vector<std::string> env;
 		char b[64];
@@ -172,7 +218,9 @@ struct Runner
 		env.push_back("UM_LOGFILE=" + serverLog);
 		env.push_back("UM_WORLD_DIR=" + worldDir);
 		env.push_back("UM_SERVER_NAME=" + cfg["name"]);
-		env.push_back("UM_SKIRMISH_MAP=" + cfg["map"]);
+		env.push_back("UM_SKIRMISH_MAP=" + serverMap);
+		env.push_back("UM_CITY_DIR=" + gHostDir + "\\cities");
+		{ char sd[64]; sprintf(sd, "UM_SPAWN_DEADZONE=%d", num(cfg, "spawn_deadzone", 400) * 5); env.push_back(sd); sprintf(sd, "UM_AI_RESERVE_LOTS=%d", num(cfg, "ai_reserve_lots", 4)); env.push_back(sd); }   // metres -> world units (0.2 m each)
 		sprintf(b, "%d", startAi); env.push_back(std::string("UM_SKIRMISH_AI=") + b);
 		sprintf(b, "%d", players); env.push_back(std::string("UM_HUMAN_SLOTS=") + b);
 		sprintf(b, "%d", pool); env.push_back(std::string("UM_AI_POOL=") + b);
@@ -180,7 +228,10 @@ struct Runner
 		sprintf(b, "%d", startAi + players + pool); env.push_back(std::string("UM_SYNTH_STARTS=") + b);
 		{ int sp = num(cfg, "game_speed", 30); if (sp < 15) sp = 15; if (sp > 60) sp = 60; sprintf(b, "%d", sp); env.push_back(std::string("UM_GAME_SPEED=") + b); }
 		sprintf(b, "%d", num(cfg, "ai_join_secs", 20) * 30); env.push_back(std::string("UM_AI_JOIN_FRAMES=") + b);
-		sprintf(b, "%d", num(cfg, "epoch_secs", 300) * 30); env.push_back(std::string("UM_EPOCH=") + b);
+		{	// "auto": every 5 minutes, or every 15 on a city map (an epoch pauses the world while it is saved and reloaded: ~20 s on a city map)
+			int es = atoi(cfg["epoch_secs"].c_str()); if (es <= 0) es = serverMap.compare(0, 5, "city:") == 0 ? 900 : 300;
+			sprintf(b, "%d", es * 30 * num(cfg, "game_speed", 30) / 30); env.push_back(std::string("UM_EPOCH=") + b);
+		}
 		env.push_back("UM_START_CASH=" + cfg["start_cash"]);
 		env.push_back("UM_LASTHIT=" + cfg["last_hit_bonus"]);
 		env.push_back("UM_LASTHIT_PCT=" + cfg["last_hit_percent"]);
@@ -215,7 +266,7 @@ struct Runner
 		AssignProcessToJobObject(job, pi.hProcess); ResumeThread(pi.hThread); CloseHandle(pi.hThread);
 		if (proc) CloseHandle(proc);
 		proc = pi.hProcess; startedTick = GetTickCount();
-		char m[160]; sprintf(m, "Server started (process %lu) on %s:%s, %s.", (unsigned long)pi.dwProcessId, cfg["host"].c_str(), cfg["port"].c_str(), fileExists(worldDir + "\\epoch.sav") ? "resuming the saved world" : "new world"); logLine(m);
+		char m[400]; sprintf(m, "Server started (process %lu) on %s:%s, map %s, %s (%s).", (unsigned long)pi.dwProcessId, cfg["host"].c_str(), cfg["port"].c_str(), mapCode.c_str(), fileExists(worldDir + "\\epoch.sav") ? "resuming its saved world" : "new world", worldDir.c_str()); logLine(m);
 		DeleteFileA((worldDir + "\\status.json").c_str());
 		return true;
 	}
@@ -352,7 +403,12 @@ static HWND gWnd, gStateLbl, gInfoLbl, gPlayers, gLogBox, gEdits[64], gStartBtn,
 static size_t gLogShown = 0;
 
 static std::string getText(HWND h) { char b[1024]; GetWindowTextA(h, b, sizeof b); return b; }
-static Config configFromUi() { Config c; for (int i = 0; i < kNumSettings; ++i) c[kSettings[i].key] = getText(gEdits[i]); return c; }
+static Config configFromUi()
+{
+	Config c; for (int i = 0; i < kNumSettings; ++i) c[kSettings[i].key] = getText(gEdits[i]);
+	{ std::string code, sm; resolveMap(c["map"], code, sm); for (int k = 0; k < kNumMaps; ++k) if (code == kMaps[k].code) c["map"] = code; }   // store the codename, not the label
+	return c;
+}
 
 static void refreshUi()
 {
@@ -424,7 +480,18 @@ static LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l)
 		for (int i = 0; i < kNumSettings; ++i)
 		{
 			HWND lbl = CreateWindowA("STATIC", kSettings[i].label, WS_CHILD | WS_VISIBLE, 10, y + 3, 190, 18, h, NULL, NULL, NULL); SendMessageA(lbl, WM_SETFONT, (WPARAM)font, TRUE);
-			gEdits[i] = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", cfg[kSettings[i].key].c_str(), WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, 205, y, i == 1 || i == 2 ? 150 : 170, 20, h, (HMENU)(INT_PTR)(ID_EDIT0 + i), NULL, NULL); SendMessageA(gEdits[i], WM_SETFONT, (WPARAM)font, TRUE);
+			if (i == kMapSetting)
+			{	// drop-down of the known maps (editable: a .map path can be typed in); each map keeps its own world
+				gEdits[i] = CreateWindowExA(0, "COMBOBOX", "", WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWN | CBS_AUTOHSCROLL, 205, y - 1, 170, 200, h, (HMENU)(INT_PTR)(ID_EDIT0 + i), NULL, NULL);
+				SendMessageA(gEdits[i], WM_SETFONT, (WPARAM)font, TRUE); SendMessageA(gEdits[i], CB_SETDROPPEDWIDTH, 380, 0);
+				std::string cur = cfg[kSettings[i].key], code, sm; resolveMap(cur, code, sm); int sel = -1;
+				for (int k = 0; k < kNumMaps; ++k) { std::string item = std::string(kMaps[k].code) + "  - " + kMaps[k].label; SendMessageA(gEdits[i], CB_ADDSTRING, 0, (LPARAM)item.c_str()); if (code == kMaps[k].code) sel = k; }
+				if (sel >= 0) SendMessageA(gEdits[i], CB_SETCURSEL, sel, 0); else SetWindowTextA(gEdits[i], cur.c_str());
+				SendMessageA(gEdits[i], CB_SETEDITSEL, 0, MAKELPARAM(0, 0));   // show the start (the codename), not the end of a long label
+			}
+			else
+			gEdits[i] = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", cfg[kSettings[i].key].c_str(), WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, 205, y, i == 1 || i == 2 ? 150 : 170, 20, h, (HMENU)(INT_PTR)(ID_EDIT0 + i), NULL, NULL);
+			SendMessageA(gEdits[i], WM_SETFONT, (WPARAM)font, TRUE);
 			if (i == 1) { HWND b = CreateWindowA("BUTTON", "...", WS_CHILD | WS_VISIBLE, 360, y, 15, 20, h, (HMENU)ID_BROWSE, NULL, NULL); SendMessageA(b, WM_SETFONT, (WPARAM)font, TRUE); }
 			y += 24;
 		}
@@ -481,11 +548,11 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int show)
 		freopen("CONOUT$", "w", stdout); freopen("CONOUT$", "w", stderr);
 		if (help) { usage(); return 0; }
 		Config cfg = loadConfig(gIniPath); for (Config::iterator it = overrides.begin(); it != overrides.end(); ++it) cfg[it->first] = it->second;
-		gRunner.cfg = cfg; gRunner.worldDir = absPath(cfg["world_dir"], gHostDir); CreateDirectoryA(gRunner.worldDir.c_str(), NULL);
-		gLogFile = gRunner.worldDir + "\\host_log.txt";
+		gRunner.cfg = cfg; gRunner.worldDir = worldDirFor(cfg, gHostDir);
+		gLogFile = absPath(cfg["world_dir"], gHostDir) + "\\host_log.txt";
 		return runCli(cfg);
 	}
-	{ Config cfg = loadConfig(gIniPath); gRunner.worldDir = absPath(cfg["world_dir"], gHostDir); CreateDirectoryA(gRunner.worldDir.c_str(), NULL); gLogFile = gRunner.worldDir + "\\host_log.txt"; }
+	{ Config cfg = loadConfig(gIniPath); gRunner.worldDir = worldDirFor(cfg, gHostDir); gLogFile = absPath(cfg["world_dir"], gHostDir) + "\\host_log.txt"; }
 	INITCOMMONCONTROLSEX ic = { sizeof ic, ICC_STANDARD_CLASSES }; InitCommonControlsEx(&ic);
 	WNDCLASSA wc; memset(&wc, 0, sizeof wc); wc.lpfnWndProc = proc; wc.hInstance = inst; wc.hCursor = LoadCursor(NULL, IDC_ARROW); wc.hIcon = LoadIcon(inst, MAKEINTRESOURCE(1)); wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1); wc.lpszClassName = "LivingWorldHost";
 	RegisterClassA(&wc);

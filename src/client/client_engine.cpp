@@ -110,6 +110,11 @@ static void umClientTick()
 		for (Object *o = TheGameLogic->getFirstObject(); o && me; o = o->getNextObject()) if (o->getControllingPlayer() == me) { if (!first) first = o; if (o->isKindOf(KINDOF_COMMANDCENTER)) { first = o; break; } }
 		if (first) { Coord3D pos = *first->getPosition(); TheTacticalView->lookAt(&pos); centeredFor = slot; }
 	}
+	if (const char *cam = getenv("UM_CAMERA_AT"))
+	{	// testing aid: UM_CAMERA_AT=x,y[,frame] moves the camera there once the world has run that many frames (default 300)
+		static bool done = false; float cx = 0, cy = 0; unsigned at = 300;
+		if (!done && sscanf(cam, "%f,%f,%u", &cx, &cy, &at) >= 2 && TheGameLogic->getFrame() >= at) { Coord3D pos; pos.x = cx; pos.y = cy; pos.z = TheTerrainLogic->getGroundHeight(cx, cy); TheTacticalView->lookAt(&pos); done = true; printf("[um] client: camera to (%.0f,%.0f)\n", cx, cy); }
+	}
 	if (slot == applied) return;
 	Player *p = NULL;
 	if (slot >= 0) { char nm[32]; sprintf(nm, "player%d", slot); p = ThePlayerList->findPlayerWithNameKey(TheNameKeyGenerator->nameToKey(nm)); }
@@ -142,7 +147,16 @@ public:
 		GameEngine::init(argc, argv);
 		fprintf(stderr, "[um] client engine: base init done, UM_CLIENT=%s\n", getenv("UM_CLIENT") ? getenv("UM_CLIENT") : "(unset)");
 		TheMultiplayerSettings->extendColors(MAX_SLOTS + 1);   // every process must agree on the palette
-		{ extern bool UmEnsureGrandMap(); const char *mp = getenv("UM_SKIRMISH_MAP"); if (getenv("UM_SERVER") && mp && strstr(mp, "Living World Grand")) UmEnsureGrandMap(); }   // the very large map is made from the local Tournament Desert on first use
+		{ extern bool UmEnsureGrandMap(const char *); const char *mp = getenv("UM_SKIRMISH_MAP"); if (getenv("UM_SERVER") && mp && strstr(mp, "Living World Grand")) UmEnsureGrandMap(mp); }   // the very large map is made from the local Tournament Desert on first use
+		{	// "city:<name>" asks for a real-city map, built from cities/<name>.lwcity and the local game files on first use
+			extern bool UmEnsureCityMap(const char *, std::string *); const char *mp = getenv("UM_SKIRMISH_MAP");
+			if (getenv("UM_SERVER") && mp && strncmp(mp, "city:", 5) == 0)
+			{
+				std::string path; static std::string envs;
+				if (UmEnsureCityMap(mp + 5, &path)) { envs = "UM_SKIRMISH_MAP=" + path; putenv((char *)envs.c_str()); }
+				else printf("[um] server: the city map '%s' could not be built\n", mp + 5);
+			}
+		}
 		if (const char *srv = getenv("UM_SERVER")) { gUmServerMode = getenv("UM_STANDALONE_WINDOWED") == NULL; startServer(atoi(srv)); return; }
 		const char *target = getenv("UM_CLIENT");
 		if (!target) return;
